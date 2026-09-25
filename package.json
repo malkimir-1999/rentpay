@@ -1,0 +1,32 @@
+{
+  "name": "rentpay",
+  "private": true,
+  "packageManager": "npm@10.9.8",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace @rentpay/web",
+    "build": "npm run build --workspace @rentpay/web && npm run build --workspace @rentpay/api",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "eslint apps packages tests playwright.config.ts",
+    "test": "npm run test --workspaces --if-present",
+    "test:e2e": "playwright test",
+    "db:validate": "npm run db:validate --workspace @rentpay/api",
+    "db:generate": "npm run db:generate --workspace @rentpay/api",
+    "db:migrate": "npm run db:migrate --workspace @rentpay/api",
+    "db:seed": "npm run db:seed --workspace @rentpay/api"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.22.0",
+    "@playwright/test": "1.63.0",
+    "eslint": "9.22.0",
+    "globals": "16.0.0",
+    "prettier": "3.5.3",
+    "tsx": "4.19.2",
+    "typescript": "5.7.3",
+    "typescript-eslint": "8.26.0",
+    "vitest": "3.0.9"
+  }
+}

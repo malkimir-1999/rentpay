@@ -1,0 +1,570 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  GRACE_PERIOD
+  EXPIRED
+  SUSPENDED
+  CANCELLED
+}
+
+enum MembershipStatus {
+  ACTIVE
+  INVITED
+  SUSPENDED
+}
+
+enum AccountType {
+  BUSINESS
+  CUSTOMER
+  PLATFORM
+}
+
+enum PlatformRole {
+  SUPER_ADMIN
+  SUPPORT
+}
+
+enum SubscriptionPaymentStatus {
+  PENDING_VERIFICATION
+  APPROVED
+  REJECTED
+}
+
+enum SubscriptionPaymentMethod {
+  BANK_TRANSFER
+  EASYPAISA
+  JAZZCASH
+}
+
+enum VehicleCondition {
+  READY
+  PREPARATION
+  MAINTENANCE
+  DAMAGED
+  OUT_OF_SERVICE
+}
+
+enum CustomerStatus {
+  ACTIVE
+  RESTRICTED
+}
+
+enum VerificationStatus {
+  NOT_REVIEWED
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+enum ReservationStatus {
+  PENDING
+  CONFIRMED
+  READY_FOR_PICKUP
+  CONVERTED_TO_RENTAL
+  CANCELLED
+  DECLINED
+  NO_SHOW
+  EXPIRED
+}
+
+enum ReservationSource {
+  STAFF
+  PUBLIC
+}
+
+enum RentalStatus {
+  BOOKED
+  ACTIVE
+  RETURNED
+  CLOSED
+  CANCELLED
+}
+
+enum RentalPaymentMethod {
+  CASH
+  BANK_TRANSFER
+  EASYPAISA
+  JAZZCASH
+  ONLINE_GATEWAY
+  OTHER
+}
+
+enum RentalPaymentEntryType {
+  RECEIVED
+  REFUNDED
+}
+
+enum DepositEntryType {
+  COLLECTED
+  REFUNDED
+  RETAINED
+}
+
+model User {
+  id                 String               @id @default(cuid())
+  email              String               @unique
+  name               String?
+  phone              String?
+  termsAcceptedAt    DateTime?
+  termsVersion       String?
+  passwordHash       String?
+  emailVerifiedAt    DateTime?
+  accountType        AccountType          @default(BUSINESS)
+  platformRole       PlatformRole?
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+  memberships        BusinessMembership[]
+  auditEvents        AuditEvent[]
+  authTokens         AuthToken[]
+  invitationsCreated Invitation[]         @relation("InvitationCreator")
+  apiSessions        ApiSession[]
+  customerProfiles   Customer[]
+}
+
+model Business {
+  id             String               @id @default(cuid())
+  name           String
+  slug           String               @unique
+  phone          String?
+  email          String?
+  address        String?
+  country        String               @default("PK")
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
+  memberships    BusinessMembership[]
+  settings       BusinessSettings?
+  locations      Location[]
+  vehicles       Vehicle[]
+  invitations    Invitation[]
+  subscriptions  Subscription[]
+  auditEvents    AuditEvent[]
+  customers      Customer[]
+  drivers        Driver[]
+  reservations   Reservation[]
+  rentals        Rental[]
+  rentalPayments RentalPaymentEntry[]
+  depositEntries DepositLedgerEntry[]
+}
+
+model Customer {
+  id           String             @id @default(cuid())
+  businessId   String
+  userId       String?
+  fullName     String
+  email        String?
+  phone        String
+  address      String?
+  notes        String?
+  status       CustomerStatus     @default(ACTIVE)
+  verification VerificationStatus @default(NOT_REVIEWED)
+  archivedAt   DateTime?
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+  business     Business           @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  user         User?              @relation(fields: [userId], references: [id], onDelete: SetNull)
+  drivers      Driver[]
+  reservations Reservation[]
+  rentals      Rental[]
+
+  @@unique([id, businessId])
+  @@unique([businessId, userId])
+  @@unique([businessId, email])
+  @@index([businessId, archivedAt, fullName])
+  @@index([businessId, phone])
+}
+
+model Driver {
+  id               String             @id @default(cuid())
+  businessId       String
+  customerId       String
+  fullName         String
+  phone            String
+  licenseNumber    String?
+  licenseCountry   String?
+  licenseExpiresAt DateTime?
+  verification     VerificationStatus @default(NOT_REVIEWED)
+  notes            String?
+  archivedAt       DateTime?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  business         Business           @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  customer         Customer           @relation(fields: [customerId, businessId], references: [id, businessId], onDelete: Cascade)
+
+  @@index([businessId, customerId, archivedAt])
+  @@index([businessId, licenseNumber])
+}
+
+model BusinessMembership {
+  id         String           @id @default(cuid())
+  userId     String
+  businessId String
+  roleId     String
+  status     MembershipStatus @default(ACTIVE)
+  createdAt  DateTime         @default(now())
+  user       User             @relation(fields: [userId], references: [id])
+  business   Business         @relation(fields: [businessId], references: [id])
+  role       Role             @relation(fields: [roleId], references: [id])
+
+  @@unique([userId, businessId])
+  @@index([businessId])
+}
+
+model Role {
+  id          String               @id @default(cuid())
+  key         String               @unique
+  name        String
+  permissions RolePermission[]
+  memberships BusinessMembership[]
+  invitations Invitation[]
+}
+
+model Permission {
+  id              String           @id @default(cuid())
+  key             String           @unique
+  rolePermissions RolePermission[]
+}
+
+model RolePermission {
+  roleId       String
+  permissionId String
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+}
+
+model Location {
+  id             String        @id @default(cuid())
+  businessId     String
+  name           String
+  timezone       String
+  address        String?
+  phone          String?
+  archivedAt     DateTime?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  business       Business      @relation(fields: [businessId], references: [id])
+  vehicles       Vehicle[]
+  pickups        Reservation[] @relation("ReservationPickup")
+  dropoffs       Reservation[] @relation("ReservationDropoff")
+  rentalPickups  Rental[]      @relation("RentalPickup")
+  rentalDropoffs Rental[]      @relation("RentalDropoff")
+  actualReturns  Rental[]      @relation("RentalActualReturn")
+
+  @@unique([id, businessId])
+  @@unique([businessId, name])
+  @@index([businessId, archivedAt])
+}
+
+model BusinessSettings {
+  id                          String    @id @default(cuid())
+  businessId                  String    @unique
+  timezone                    String    @default("Asia/Karachi")
+  currency                    String    @default("PKR")
+  country                     String    @default("PK")
+  onboardingStep              Int       @default(0)
+  onboardingCompletedAt       DateTime?
+  rentalDurationModel         String    @default("DAILY")
+  depositRequired             Boolean   @default(true)
+  defaultDepositMinor         Int       @default(0)
+  lateReturnGraceMinutes      Int       @default(60)
+  lateReturnFeeMinor          Int       @default(0)
+  bookingMode                 String    @default("REQUEST_TO_BOOK")
+  enabledRentalPaymentMethods String[]  @default(["CASH", "BANK_TRANSFER"])
+  publicBrandColor            String    @default("#0B8F68")
+  publicWebsiteEnabled        Boolean   @default(false)
+  business                    Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+}
+
+// Deliberately limited setup record. Operational fleet workflows are a later phase.
+model Vehicle {
+  id                 String           @id @default(cuid())
+  businessId         String
+  locationId         String?
+  make               String
+  model              String
+  variant            String?
+  year               Int?
+  registrationNumber String
+  vin                String?
+  color              String?
+  category           String?
+  transmission       String?
+  fuelType           String?
+  seats              Int?
+  odometerKm         Int              @default(0)
+  condition          VehicleCondition @default(READY)
+  notes              String?
+  archivedAt         DateTime?
+  dailyRateMinor     Int
+  weeklyRateMinor    Int?
+  monthlyRateMinor   Int?
+  depositMinor       Int              @default(0)
+  currency           String           @default("PKR")
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+  business           Business         @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  location           Location?        @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  reservations       Reservation[]
+  rentals            Rental[]
+
+  @@unique([id, businessId])
+  @@unique([businessId, registrationNumber])
+  @@unique([businessId, vin])
+  @@index([businessId, createdAt])
+  @@index([businessId, condition, archivedAt])
+}
+
+model Reservation {
+  id                  String               @id @default(cuid())
+  businessId          String
+  customerId          String
+  vehicleId           String
+  pickupLocationId    String
+  dropoffLocationId   String?
+  status              ReservationStatus    @default(PENDING)
+  source              ReservationSource    @default(STAFF)
+  startAt             DateTime
+  endAt               DateTime
+  dailyRateMinor      Int
+  estimatedTotalMinor Int
+  depositMinor        Int
+  currency            String
+  customerName        String
+  customerPhone       String
+  customerEmail       String?
+  notes               String?
+  statusReason        String?
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  business            Business             @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  customer            Customer             @relation(fields: [customerId, businessId], references: [id, businessId])
+  vehicle             Vehicle              @relation(fields: [vehicleId, businessId], references: [id, businessId])
+  pickupLocation      Location             @relation("ReservationPickup", fields: [pickupLocationId, businessId], references: [id, businessId])
+  dropoffLocation     Location?            @relation("ReservationDropoff", fields: [dropoffLocationId, businessId], references: [id, businessId])
+  paymentEntries      RentalPaymentEntry[]
+  depositEntries      DepositLedgerEntry[]
+  rental              Rental?
+
+  @@unique([businessId, id])
+  @@index([businessId, status, startAt])
+  @@index([businessId, vehicleId, status, startAt, endAt])
+  @@index([businessId, customerId, createdAt])
+}
+
+model RentalPaymentEntry {
+  id            String                 @id @default(cuid())
+  businessId    String
+  reservationId String
+  type          RentalPaymentEntryType @default(RECEIVED)
+  amountMinor   Int
+  currency      String
+  method        RentalPaymentMethod
+  reference     String?
+  note          String?
+  recordedById  String?
+  createdAt     DateTime               @default(now())
+  business      Business               @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  reservation   Reservation            @relation(fields: [reservationId, businessId], references: [id, businessId], onDelete: Restrict)
+
+  @@index([businessId, reservationId, createdAt])
+  @@index([businessId, createdAt])
+}
+
+model Rental {
+  id                     String       @id @default(cuid())
+  businessId             String
+  reservationId          String
+  customerId             String
+  vehicleId              String
+  pickupLocationId       String
+  dropoffLocationId      String?
+  actualReturnLocationId String?
+  status                 RentalStatus @default(BOOKED)
+  startAt                DateTime
+  expectedReturnAt       DateTime
+  actualReturnAt         DateTime?
+  dailyRateMinor         Int
+  estimatedTotalMinor    Int
+  depositMinor           Int
+  currency               String
+  customerName           String
+  customerPhone          String
+  customerEmail          String?
+  startOdometerKm        Int?
+  endOdometerKm          Int?
+  startFuelPercent       Int?
+  endFuelPercent         Int?
+  checkedOutAt           DateTime?
+  checkedInAt            DateTime?
+  notes                  String?
+  checkoutNotes          String?
+  returnNotes            String?
+  createdAt              DateTime     @default(now())
+  updatedAt              DateTime     @updatedAt
+  business               Business     @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  reservation            Reservation  @relation(fields: [businessId, reservationId], references: [businessId, id], onDelete: Restrict)
+  customer               Customer     @relation(fields: [customerId, businessId], references: [id, businessId], onDelete: Restrict)
+  vehicle                Vehicle      @relation(fields: [vehicleId, businessId], references: [id, businessId], onDelete: Restrict)
+  pickupLocation         Location     @relation("RentalPickup", fields: [pickupLocationId, businessId], references: [id, businessId], onDelete: Restrict)
+  dropoffLocation        Location?    @relation("RentalDropoff", fields: [dropoffLocationId, businessId], references: [id, businessId], onDelete: Restrict)
+  actualReturnLocation   Location?    @relation("RentalActualReturn", fields: [actualReturnLocationId, businessId], references: [id, businessId], onDelete: Restrict)
+
+  @@unique([businessId, id])
+  @@unique([businessId, reservationId])
+  @@index([businessId, status, expectedReturnAt])
+  @@index([businessId, vehicleId, status, startAt, expectedReturnAt])
+  @@index([businessId, customerId, createdAt])
+}
+
+model DepositLedgerEntry {
+  id            String           @id @default(cuid())
+  businessId    String
+  reservationId String
+  type          DepositEntryType
+  amountMinor   Int
+  currency      String
+  reason        String?
+  recordedById  String?
+  createdAt     DateTime         @default(now())
+  business      Business         @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  reservation   Reservation      @relation(fields: [reservationId, businessId], references: [id, businessId], onDelete: Restrict)
+
+  @@index([businessId, reservationId, createdAt])
+  @@index([businessId, createdAt])
+}
+
+model Plan {
+  id                  String                @id @default(cuid())
+  key                 String                @unique
+  name                String
+  amountMinor         Int                   @default(0)
+  currency            String                @default("PKR")
+  isPurchasable       Boolean               @default(false)
+  vehicleLimit        Int?
+  staffLimit          Int?
+  features            String[]              @default([])
+  subscriptions       Subscription[]
+  requestedByPayments SubscriptionPayment[] @relation("RequestedPlan")
+}
+
+model Subscription {
+  id             String                @id @default(cuid())
+  businessId     String
+  planId         String
+  status         SubscriptionStatus
+  trialStartedAt DateTime?
+  trialEndsAt    DateTime?
+  activatedAt    DateTime?
+  expiredAt      DateTime?
+  business       Business              @relation(fields: [businessId], references: [id])
+  plan           Plan                  @relation(fields: [planId], references: [id])
+  payments       SubscriptionPayment[]
+
+  @@index([businessId, status])
+}
+
+model SubscriptionPayment {
+  id              String                    @id @default(cuid())
+  subscriptionId  String
+  status          SubscriptionPaymentStatus @default(PENDING_VERIFICATION)
+  method          SubscriptionPaymentMethod
+  reference       String?
+  proofAssetId    String?
+  amountMinor     Int?
+  requestedPlanId String?
+  createdAt       DateTime                  @default(now())
+  subscription    Subscription              @relation(fields: [subscriptionId], references: [id])
+  proofAsset      FileAsset?                @relation(fields: [proofAssetId], references: [id])
+  requestedPlan   Plan?                     @relation("RequestedPlan", fields: [requestedPlanId], references: [id])
+
+  @@index([status, createdAt])
+}
+
+model AuthToken {
+  id         String    @id @default(cuid())
+  userId     String
+  tokenHash  String    @unique
+  purpose    String
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, purpose, expiresAt])
+}
+
+model ApiSession {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenId   String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+}
+
+model Invitation {
+  id          String    @id @default(cuid())
+  businessId  String
+  email       String
+  roleId      String
+  tokenHash   String    @unique
+  expiresAt   DateTime
+  acceptedAt  DateTime?
+  createdById String
+  createdAt   DateTime  @default(now())
+  business    Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  role        Role      @relation(fields: [roleId], references: [id])
+  creator     User      @relation("InvitationCreator", fields: [createdById], references: [id])
+
+  @@index([businessId, email])
+}
+
+model AuditEvent {
+  id          String    @id @default(cuid())
+  businessId  String?
+  actorUserId String?
+  action      String
+  entityType  String
+  entityId    String?
+  metadata    Json?
+  ipAddress   String?
+  createdAt   DateTime  @default(now())
+  business    Business? @relation(fields: [businessId], references: [id])
+  actor       User?     @relation(fields: [actorUserId], references: [id])
+
+  @@index([businessId, createdAt])
+}
+
+model FileAsset {
+  id                   String                @id @default(cuid())
+  businessId           String?
+  provider             String
+  key                  String
+  mimeType             String
+  sizeBytes            Int
+  createdAt            DateTime              @default(now())
+  subscriptionPayments SubscriptionPayment[]
+}
+
+model Notification {
+  id         String   @id @default(cuid())
+  businessId String?
+  event      String
+  channel    String
+  status     String
+  createdAt  DateTime @default(now())
+}

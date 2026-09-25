@@ -1,0 +1,9 @@
+# Multi-tenancy
+
+`BusinessMembership` is the authorization link between a business user and a tenant. A business context is established from the authenticated user's active membership; optional `X-Business-ID` only selects among memberships the user already holds and is rejected otherwise. A request body, query parameter, or guessed route ID never establishes tenant context.
+
+`TenantAccessGuard` resolves the membership and role permissions, then attaches trusted business context. Tenant-resource list, detail, create, update, and delete queries all use that business ID. Create ignores any supplied `businessId` and uses the guard context. Ownership checks for uploaded payment proofs and assets use the same tenant boundary. Driver records contain the trusted business ID and reference customers through a composite `(customerId, businessId)` foreign key, preventing cross-tenant parent assignment at the database boundary. Reservations and their rental payment/deposit ledger rows reference tenant-owned parents through composite foreign keys. Integration tests cover reservation cross-tenant list/read/status/ledger access, guessed IDs, supplied-tenant spoofing, and vehicle links; they also verify financial outflows cannot exceed payment/deposit balances.
+
+Platform users use a separate platform guard. Super Admin does not imply a business membership. Customer identity uses a separate customer account context and customer routes; it cannot access business or platform APIs. Support impersonation is deliberately absent until an explicit, time-limited, audited grant workflow is designed.
+
+New tenant-owned tables must have a `businessId` foreign key, indexes aligned with tenant access patterns, and tenant-scoped repository methods. Each module should add negative cross-tenant tests for every operation before release.

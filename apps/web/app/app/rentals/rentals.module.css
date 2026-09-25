@@ -1,0 +1,23 @@
+.workspace { display: grid; gap: var(--rp-space-5); }
+.summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--rp-space-4); }
+.summary :global(.ant-card-body) { display: grid; gap: var(--rp-space-2); }
+.summary span { color: var(--rp-color-text-secondary); font-size: var(--rp-font-size-sm); }
+.summary strong { font-size: var(--rp-font-size-h2); }
+.listCard { border-color: var(--rp-color-border); }
+.listHeading { margin-bottom: var(--rp-space-4); }
+.listHeading h2 { margin: 0; font-size: var(--rp-font-size-h4); }
+.listHeading p { max-width: 760px; margin: var(--rp-space-2) 0 0; color: var(--rp-color-text-secondary); font-size: var(--rp-font-size-sm); }
+.textAction { padding: 0; border: 0; background: transparent; color: var(--rp-color-link); cursor: pointer; font: inherit; font-weight: var(--rp-weight-semibold); text-align: left; }
+.textAction:focus-visible { outline: 2px solid var(--rp-color-primary-hover); outline-offset: 3px; }
+.workspace :global(.ant-table-cell small) { display: block; color: var(--rp-color-text-secondary); font-size: var(--rp-font-size-caption); }
+.detail { display: grid; gap: var(--rp-space-4); }
+.detailStatus { display: flex; align-items: center; flex-wrap: wrap; gap: var(--rp-space-2); color: var(--rp-color-text-secondary); font-size: var(--rp-font-size-sm); }
+.actionCard { border-color: var(--rp-color-border); }
+.actionCard :global(.ant-alert) { margin-bottom: var(--rp-space-4); }
+.formGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--rp-space-3); }
+.numberInput { width: 100%; }
+.note { padding: var(--rp-space-3); border: 1px solid var(--rp-color-border); border-radius: var(--rp-radius-md); background: var(--rp-color-surface); }
+.note strong { font-size: var(--rp-font-size-sm); }
+.note p { margin: var(--rp-space-1) 0 0; color: var(--rp-color-text-secondary); font-size: var(--rp-font-size-sm); }
+@media (max-width: 768px) { .summary { grid-template-columns: 1fr; } }
+@media (max-width: 480px) { .formGrid { grid-template-columns: 1fr; } }

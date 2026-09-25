@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "seed-dist",
+    "rootDir": "../..",
+    "incremental": false
+  },
+  "include": ["prisma/seed.ts", "src/infra/app.logger.ts", "src/modules/identity/auth.service.ts", "src/modules/identity/permissions.ts", "src/infra/notifications.service.ts", "src/infra/prisma.service.ts"]
+}

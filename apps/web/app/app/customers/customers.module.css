@@ -1,0 +1,27 @@
+.workspace { display: grid; gap: var(--rp-space-6); min-width: 0; }
+.listCard { border-color: var(--rp-color-border); border-radius: var(--rp-radius-lg); box-shadow: var(--rp-shadow-sm); }
+.listHeader { display: flex; align-items: center; justify-content: space-between; gap: var(--rp-space-4); margin-bottom: var(--rp-space-5); }
+.listHeader h2, .driverHeader h2 { margin: 0; font-size: var(--rp-font-size-h4); line-height: var(--rp-line-tight); }
+.listHeader p, .driverHeader p { margin: var(--rp-space-1) 0 0; color: var(--rp-color-text-secondary); font-size: var(--rp-font-size-sm); }
+.search { width: min(100%, 360px); }
+.customerLink { appearance: none; border: 0; padding: 0; color: var(--rp-color-text-primary); background: transparent; font: inherit; font-weight: var(--rp-weight-semibold); text-align: left; text-decoration: underline; text-decoration-color: transparent; text-underline-offset: 3px; cursor: pointer; transition: color var(--rp-transition-fast), text-decoration-color var(--rp-transition-fast); }
+.customerLink:hover { color: var(--rp-color-primary-hover); text-decoration-color: currentColor; }
+.customerLink:focus-visible { outline: var(--rp-focus-outline) solid var(--rp-color-primary-soft); outline-offset: var(--rp-space-1); }
+.contact { display: grid; gap: var(--rp-space-1); }
+.contact span + span { color: var(--rp-color-text-secondary); font-size: var(--rp-font-size-sm); }
+.formAlert { margin-bottom: var(--rp-space-4); }
+.formRow { display: flex; width: 100%; }
+.formRow :global(.ant-form-item) { flex: 1; min-width: 0; }
+.formActions { display: flex; justify-content: flex-end; gap: var(--rp-space-3); margin-top: var(--rp-space-6); }
+.driverHeader { display: flex; align-items: center; justify-content: space-between; gap: var(--rp-space-3); margin-block: var(--rp-space-6) var(--rp-space-4); }
+.driverList { display: grid; gap: var(--rp-space-3); }
+.driverCard { display: flex; justify-content: space-between; align-items: center; gap: var(--rp-space-3); }
+.driverList p { margin: var(--rp-space-2) 0 0; color: var(--rp-color-text-secondary); overflow-wrap: anywhere; }
+
+@media (max-width: 600px) {
+  .listHeader { align-items: stretch; flex-direction: column; }
+  .search { width: 100%; }
+  .formRow { flex-direction: column; gap: 0 !important; }
+  .formActions > :global(.ant-btn) { flex: 1; min-width: 0; }
+  .driverHeader { align-items: flex-start; flex-direction: column; }
+}
