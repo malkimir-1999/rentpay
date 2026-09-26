@@ -1,0 +1,7 @@
+.workspace { display: grid; gap: var(--rp-space-5); padding-block: var(--rp-space-5); }
+.card { width: 100%; }
+.card h2 { margin: 0; font-size: var(--rp-font-size-h3); }
+.fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 var(--rp-space-4); }
+.fields > div { min-width: 0; }
+.actions { display: flex; flex-wrap: wrap; gap: var(--rp-space-2); }
+@media (max-width: 700px) { .fields { grid-template-columns: 1fr; } }

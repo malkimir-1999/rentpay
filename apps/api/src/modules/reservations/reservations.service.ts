@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, Injectable, NotFoundException }
 import { Prisma, type ReservationStatus } from '@prisma/client';
 import type { Actor } from '../identity/auth.types';
 import { PrismaService } from '../../infra/prisma.service';
+import { blockingMaintenance } from '../maintenance/maintenance-window';
 
 const blockingStatuses: ReservationStatus[] = ['PENDING', 'CONFIRMED', 'READY_FOR_PICKUP', 'CONVERTED_TO_RENTAL'];
 const blockingRentalStatuses = ['BOOKED', 'ACTIVE'] as const;
@@ -32,6 +33,7 @@ export class ReservationsService {
         ...(locationId ? { OR: [{ locationId }, { locationId: null }] } : {}),
         reservations: { none: { businessId, status: { in: blockingStatuses }, startAt: { lt: endAt }, endAt: { gt: startAt } } },
         rentals: { none: { businessId, status: { in: [...blockingRentalStatuses] }, startAt: { lt: endAt }, expectedReturnAt: { gt: startAt } } },
+        maintenanceOrders: { none: blockingMaintenance(businessId, startAt, endAt) },
       },
       select: { id: true, make: true, model: true, variant: true, year: true, registrationNumber: true, category: true, seats: true, locationId: true, dailyRateMinor: true, depositMinor: true, currency: true },
       orderBy: [{ make: 'asc' }, { model: 'asc' }], take: 200,
@@ -43,7 +45,7 @@ export class ReservationsService {
     const { startAt, endAt, days } = validateWindow(startInput, endInput);
     const business = await this.prisma.business.findFirst({ where: { slug, settings: { publicWebsiteEnabled: true } }, select: { id: true, name: true } });
     if (!business) throw new NotFoundException('This rental page is not available.');
-    const vehicles = await this.prisma.vehicle.findMany({ where: { businessId: business.id, archivedAt: null, condition: 'READY', reservations: { none: { businessId: business.id, status: { in: blockingStatuses }, startAt: { lt: endAt }, endAt: { gt: startAt } } }, rentals: { none: { businessId: business.id, status: { in: [...blockingRentalStatuses] }, startAt: { lt: endAt }, expectedReturnAt: { gt: startAt } } } }, select: { id: true, make: true, model: true, variant: true, year: true, category: true, seats: true, transmission: true, fuelType: true, dailyRateMinor: true, depositMinor: true, currency: true, location: { select: { id: true, name: true } } }, orderBy: [{ make: 'asc' }, { model: 'asc' }], take: 100 });
+    const vehicles = await this.prisma.vehicle.findMany({ where: { businessId: business.id, archivedAt: null, condition: 'READY', reservations: { none: { businessId: business.id, status: { in: blockingStatuses }, startAt: { lt: endAt }, endAt: { gt: startAt } } }, rentals: { none: { businessId: business.id, status: { in: [...blockingRentalStatuses] }, startAt: { lt: endAt }, expectedReturnAt: { gt: startAt } } }, maintenanceOrders: { none: blockingMaintenance(business.id, startAt, endAt) } }, select: { id: true, make: true, model: true, variant: true, year: true, category: true, seats: true, transmission: true, fuelType: true, dailyRateMinor: true, depositMinor: true, currency: true, location: { select: { id: true, name: true } } }, orderBy: [{ make: 'asc' }, { model: 'asc' }], take: 100 });
     return { business: { name: business.name, slug }, startAt, endAt, billableDays: days, vehicles };
   }
 
@@ -70,6 +72,7 @@ export class ReservationsService {
       const conflict = await tx.reservation.findFirst({ where: { businessId: business.id, vehicleId: vehicle.id, status: { in: blockingStatuses }, startAt: { lt: endAt }, endAt: { gt: startAt } }, select: { id: true } });
       const activeRental = await tx.rental.findFirst({ where: { businessId: business.id, vehicleId: vehicle.id, status: { in: [...blockingRentalStatuses] }, startAt: { lt: endAt }, expectedReturnAt: { gt: startAt } }, select: { id: true } });
       if (conflict || activeRental) throw new ConflictException('Those dates have just become unavailable. Choose another vehicle or date range.');
+      if (await tx.maintenanceWorkOrder.findFirst({ where: { vehicleId: vehicle.id, ...blockingMaintenance(business.id, startAt, endAt) }, select: { id: true } })) throw new ConflictException('This vehicle is scheduled for service during those dates. Choose another vehicle or date range.');
       const total = days * vehicle.dailyRateMinor;
       if (!Number.isSafeInteger(total) || total > 2_147_483_647) throw new BadRequestException('The estimated total exceeds the supported amount. Choose a shorter rental period.');
       const reservation = await tx.reservation.create({ data: { businessId: business.id, customerId: customer.id, vehicleId: vehicle.id, pickupLocationId: pickup.id, startAt, endAt, dailyRateMinor: vehicle.dailyRateMinor, estimatedTotalMinor: total, depositMinor: vehicle.depositMinor, currency: vehicle.currency, customerName: name, customerPhone: phone, customerEmail: email, notes: input.notes?.trim() || null, source: 'PUBLIC', status: 'PENDING' }, select: { id: true, status: true, startAt: true, endAt: true, estimatedTotalMinor: true, depositMinor: true, currency: true, customerName: true, vehicle: { select: { make: true, model: true } } } });
@@ -111,6 +114,7 @@ export class ReservationsService {
       if (conflict) throw new ConflictException('This vehicle is already reserved for some or all of those dates. Choose another vehicle or time.');
       const activeRental = await tx.rental.findFirst({ where: { businessId, vehicleId: vehicle.id, status: { in: [...blockingRentalStatuses] }, startAt: { lt: endAt }, expectedReturnAt: { gt: startAt } }, select: { id: true } });
       if (activeRental) throw new ConflictException('This vehicle is already assigned to a rental for some or all of those dates. Choose another vehicle or time.');
+      if (await tx.maintenanceWorkOrder.findFirst({ where: { vehicleId: vehicle.id, ...blockingMaintenance(businessId, startAt, endAt) }, select: { id: true } })) throw new ConflictException('This vehicle is scheduled for service during those dates. Choose another vehicle or time.');
       const total = days * vehicle.dailyRateMinor;
       if (!Number.isSafeInteger(total) || total > 2_147_483_647) throw new BadRequestException('The estimated total exceeds the supported amount. Review the rate or reservation length.');
       const reservation = await tx.reservation.create({
@@ -144,6 +148,7 @@ export class ReservationsService {
         if (conflict) throw new ConflictException('Another reservation now overlaps these dates. Review the vehicle schedule before confirming.');
         const activeRental = await tx.rental.findFirst({ where: { businessId, vehicleId: reservation.vehicleId, status: { in: [...blockingRentalStatuses] }, startAt: { lt: reservation.endAt }, expectedReturnAt: { gt: reservation.startAt } }, select: { id: true } });
         if (activeRental) throw new ConflictException('An active or booked rental overlaps these dates. Review the vehicle schedule before confirming.');
+        if (await tx.maintenanceWorkOrder.findFirst({ where: { vehicleId: reservation.vehicleId, ...blockingMaintenance(businessId, reservation.startAt, reservation.endAt) }, select: { id: true } })) throw new ConflictException('Vehicle service overlaps these dates. Review maintenance before confirming.');
       }
       const updated = await tx.reservation.update({ where: { id }, data: { status: nextStatus, statusReason: reason?.trim() || null }, select: reservationSelect });
       await tx.auditEvent.create({ data: { businessId, actorUserId: actor.userId, action: 'RESERVATION_STATUS_CHANGED', entityType: 'Reservation', entityId: id, metadata: { from: reservation.status, to: nextStatus, reason: reason?.trim() || null } } });
@@ -164,6 +169,7 @@ export class ReservationsService {
       if (vehicle?.condition !== 'READY') throw new ConflictException('This vehicle is no longer ready for handover.');
       const activeRental = await tx.rental.findFirst({ where: { businessId, vehicleId: reservation.vehicleId, status: { in: [...blockingRentalStatuses] }, startAt: { lt: reservation.endAt }, expectedReturnAt: { gt: reservation.startAt } }, select: { id: true } });
       if (activeRental) throw new ConflictException('Another rental overlaps this reservation. Review the vehicle schedule before continuing.');
+      if (await tx.maintenanceWorkOrder.findFirst({ where: { vehicleId: reservation.vehicleId, ...blockingMaintenance(businessId, reservation.startAt, reservation.endAt) }, select: { id: true } })) throw new ConflictException('Vehicle service overlaps this reservation. Review maintenance before continuing.');
       const rental = await tx.rental.create({ data: { businessId, reservationId: id, customerId: reservation.customerId, vehicleId: reservation.vehicleId, pickupLocationId: reservation.pickupLocationId, dropoffLocationId: reservation.dropoffLocationId, startAt: reservation.startAt, expectedReturnAt: reservation.endAt, dailyRateMinor: reservation.dailyRateMinor, estimatedTotalMinor: reservation.estimatedTotalMinor, depositMinor: reservation.depositMinor, currency: reservation.currency, customerName: reservation.customerName, customerPhone: reservation.customerPhone, customerEmail: reservation.customerEmail } });
       await tx.reservation.update({ where: { id }, data: { status: 'CONVERTED_TO_RENTAL' } });
       await tx.auditEvent.create({ data: { businessId, actorUserId: actor.userId, action: 'RESERVATION_CONVERTED_TO_RENTAL', entityType: 'Rental', entityId: rental.id, metadata: { reservationId: id, vehicleId: rental.vehicleId, customerId: rental.customerId } } });

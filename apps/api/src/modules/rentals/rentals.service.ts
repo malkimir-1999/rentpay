@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, ForbiddenException, Injectable,
 import { Prisma, type RentalPaymentMethod, type RentalStatus } from '@prisma/client';
 import type { Actor } from '../identity/auth.types';
 import { PrismaService } from '../../infra/prisma.service';
+import { blockingMaintenance } from '../maintenance/maintenance-window';
 
 const detailSelect = {
   id: true, status: true, startAt: true, expectedReturnAt: true, actualReturnAt: true,
@@ -54,6 +55,7 @@ export class RentalsService {
         tx.rental.findFirst({ where: { businessId, vehicleId: rental.vehicleId, id: { not: id }, status: { in: activeStatuses }, startAt: { lt: rental.expectedReturnAt }, expectedReturnAt: { gt: rental.startAt } }, select: { id: true } }),
       ]);
       if (reservationConflict || rentalConflict) throw new ConflictException('Another booking or rental overlaps the handover period. Review the vehicle schedule first.');
+      if (await tx.maintenanceWorkOrder.findFirst({ where: { vehicleId: rental.vehicleId, ...blockingMaintenance(businessId, rental.startAt, rental.expectedReturnAt) }, select: { id: true } })) throw new ConflictException('Vehicle service overlaps the handover period. Review maintenance before checkout.');
       const customer = await tx.customer.findFirst({ where: { id: rental.customerId, businessId }, select: { verification: true } });
       if (customer?.verification !== 'VERIFIED') throw new ConflictException('Verify the renter before handing over the vehicle.');
       const inspection = await tx.vehicleInspection.findFirst({ where: { businessId, rentalId: id, stage: 'PRE_HANDOVER' }, orderBy: { completedAt: 'desc' }, select: { checklist: true } });
@@ -111,6 +113,7 @@ export class RentalsService {
       const reservationConflict = await tx.reservation.findFirst({ where: { businessId, vehicleId: rental.vehicleId, id: { not: rental.reservationId }, status: { in: ['PENDING', 'CONFIRMED', 'READY_FOR_PICKUP'] }, startAt: { lt: newExpectedReturnAt }, endAt: { gt: rental.expectedReturnAt } }, select: { id: true } });
       const rentalConflict = await tx.rental.findFirst({ where: { businessId, vehicleId: rental.vehicleId, id: { not: id }, status: { in: [...activeStatuses] }, startAt: { lt: newExpectedReturnAt }, expectedReturnAt: { gt: rental.expectedReturnAt } }, select: { id: true } });
       if (reservationConflict || rentalConflict) throw new ConflictException('Another booking or rental needs this vehicle before the new return time. Choose a different time or vehicle.');
+      if (await tx.maintenanceWorkOrder.findFirst({ where: { vehicleId: rental.vehicleId, ...blockingMaintenance(businessId, rental.expectedReturnAt, newExpectedReturnAt) }, select: { id: true } })) throw new ConflictException('Vehicle service is scheduled before the new return time. Choose a different time or vehicle.');
       const billableDays = Math.max(1, Math.ceil((newExpectedReturnAt.getTime() - rental.startAt.getTime()) / 86400000));
       const total = billableDays * rental.dailyRateMinor;
       if (!Number.isSafeInteger(total) || total > 2_147_483_647) throw new BadRequestException('The rental total exceeds the supported amount. Review the rate or rental length.');

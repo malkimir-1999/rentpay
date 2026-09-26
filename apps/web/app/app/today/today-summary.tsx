@@ -12,6 +12,8 @@ export type TodayData = {
   availableVehicles: number;
   preparingVehicles: number;
   unresolvedDamage: number | null;
+  maintenanceDue: number | null;
+  maintenanceInProgress: number | null;
 };
 
 export function TodaySummary({ data, permissions }: { data: TodayData; permissions: readonly string[] }) {
@@ -23,6 +25,8 @@ export function TodaySummary({ data, permissions }: { data: TodayData; permissio
     { label: 'Ready for pickup', value: data.readyForPickup, detail: 'Reservations ready to turn into rentals.', href: '/app/reservations', permission: 'reservation.view' },
     { label: 'Vehicles ready', value: data.availableVehicles, detail: `${data.preparingVehicles} vehicle${data.preparingVehicles === 1 ? '' : 's'} in preparation. Ready vehicles may still have bookings.`, href: '/app/fleet', permission: 'vehicle.view' },
     ...(data.unresolvedDamage === null ? [] : [{ label: 'Damage cases', value: data.unresolvedDamage, detail: 'Open issues that need repair review or a final decision.', href: '/app/inspections', permission: 'inspection.manage' }]),
+    ...(data.maintenanceDue === null ? [] : [{ label: 'Service due', value: data.maintenanceDue, detail: 'Planned vehicle work due by date or mileage.', href: '/app/maintenance', permission: 'maintenance.view' }]),
+    ...(data.maintenanceInProgress === null ? [] : [{ label: 'In service', value: data.maintenanceInProgress, detail: 'Vehicle work orders currently in progress.', href: '/app/maintenance', permission: 'maintenance.view' }]),
   ];
   return <section className={styles.section} aria-labelledby="today-heading">
     <div className={styles.sectionHeader}><div><h2 id="today-heading">What needs attention today</h2><p>Times follow your business timezone: {data.timezone}.</p></div></div>

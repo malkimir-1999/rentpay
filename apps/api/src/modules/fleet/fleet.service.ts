@@ -120,6 +120,8 @@ export class FleetService {
     if (input.vin !== undefined) data.vin = input.vin.trim().toUpperCase() || null;
 
     return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "Vehicle" WHERE "id" = ${id} AND "businessId" = ${businessId} AND "archivedAt" IS NULL FOR UPDATE`);
+      if (input.condition && input.condition !== 'MAINTENANCE' && await tx.maintenanceWorkOrder.count({ where: { businessId, vehicleId: id, status: 'IN_PROGRESS', blocksAvailability: true } })) throw new ConflictException('Finish blocking maintenance before changing this vehicle condition.');
       if (input.locationId !== undefined) await this.lockActiveLocation(tx, businessId, input.locationId);
       const result = await tx.vehicle.updateMany({ where: { id, businessId, archivedAt: null }, data });
       if (!result.count) throw new NotFoundException('Vehicle was not found.');
@@ -132,6 +134,8 @@ export class FleetService {
   async archive(actor: Actor, id: string) {
     const businessId = this.businessId(actor);
     return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "Vehicle" WHERE "id" = ${id} AND "businessId" = ${businessId} AND "archivedAt" IS NULL FOR UPDATE`);
+      if (await tx.maintenanceWorkOrder.count({ where: { businessId, vehicleId: id, status: 'IN_PROGRESS' } })) throw new ConflictException('Complete or cancel active maintenance before archiving this vehicle.');
       const result = await tx.vehicle.updateMany({ where: { id, businessId, archivedAt: null }, data: { archivedAt: new Date() } });
       if (!result.count) throw new NotFoundException('Vehicle was not found.');
       await tx.auditEvent.create({ data: { businessId, actorUserId: actor.userId, action: 'VEHICLE_ARCHIVED', entityType: 'Vehicle', entityId: id } });
