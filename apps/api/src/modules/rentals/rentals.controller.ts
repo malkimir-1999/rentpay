@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
-import { RentalStatus } from '@prisma/client';
+import { RentalPaymentMethod, RentalStatus } from '@prisma/client';
 import { IsEnum, IsInt, IsISO8601, IsOptional, IsString, Max, MaxLength, Min, MinLength } from 'class-validator';
 import { AuthGuard } from '../identity/auth.guard';
 import { CurrentActor, PermissionGuard, RequirePermission, TenantAccessGuard } from '../identity/access';
@@ -18,6 +18,13 @@ class CheckInDto extends CheckOutDto {
 class ExtendRentalDto {
   @IsISO8601() expectedReturnAt!: string;
   @IsString() @MinLength(3) @MaxLength(500) reason!: string;
+}
+class SettlementDto {
+  @IsInt() @Min(0) @Max(2_000_000_000) additionalChargesMinor!: number;
+  @IsInt() @Min(0) @Max(2_000_000_000) paymentReceivedMinor!: number;
+  @IsEnum(RentalPaymentMethod) method!: RentalPaymentMethod;
+  @IsOptional() @IsString() @MaxLength(160) reference?: string;
+  @IsOptional() @IsString() @MaxLength(1000) note?: string;
 }
 
 @Controller('business/rentals')
@@ -42,4 +49,7 @@ export class RentalsController {
 
   @Patch(':id/extension') @RequirePermission('rental.manage')
   extend(@CurrentActor() actor: Actor, @Param('id') id: string, @Body() body: ExtendRentalDto) { return this.rentals.extend(actor, id, body.expectedReturnAt, body.reason); }
+
+  @Post(':id/settlement') @RequirePermission('rental.manage')
+  settle(@CurrentActor() actor: Actor, @Param('id') id: string, @Body() body: SettlementDto) { return this.rentals.settle(actor, id, body); }
 }

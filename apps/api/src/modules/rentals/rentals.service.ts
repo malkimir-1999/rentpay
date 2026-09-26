@@ -1,5 +1,5 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma, type RentalStatus } from '@prisma/client';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma, type RentalPaymentMethod, type RentalStatus } from '@prisma/client';
 import type { Actor } from '../identity/auth.types';
 import { PrismaService } from '../../infra/prisma.service';
 
@@ -15,8 +15,10 @@ const detailSelect = {
   pickupLocation: { select: { id: true, name: true } },
   dropoffLocation: { select: { id: true, name: true } },
   actualReturnLocation: { select: { id: true, name: true } },
+  settlement: { select: { id: true, rentalAmountMinor: true, additionalChargesMinor: true, paymentReceivedMinor: true, depositRetainedMinor: true, depositRefundedMinor: true, currency: true, note: true, settledAt: true } },
 } satisfies Prisma.RentalSelect;
 const activeStatuses: RentalStatus[] = ['BOOKED', 'ACTIVE'];
+const clean = (value?: string) => value?.trim() || undefined;
 
 @Injectable()
 export class RentalsService {
@@ -54,6 +56,10 @@ export class RentalsService {
       if (reservationConflict || rentalConflict) throw new ConflictException('Another booking or rental overlaps the handover period. Review the vehicle schedule first.');
       const customer = await tx.customer.findFirst({ where: { id: rental.customerId, businessId }, select: { verification: true } });
       if (customer?.verification !== 'VERIFIED') throw new ConflictException('Verify the renter before handing over the vehicle.');
+      const inspection = await tx.vehicleInspection.findFirst({ where: { businessId, rentalId: id, stage: 'PRE_HANDOVER' }, orderBy: { completedAt: 'desc' }, select: { checklist: true } });
+      if (!inspection) throw new ConflictException('Complete the pre-handover vehicle inspection before handing over the keys.');
+      const checklist = inspection.checklist as Record<string, string>;
+      if (Object.values(checklist).some((value) => value === 'ISSUE')) throw new ConflictException('Resolve vehicle condition issues and complete a clear pre-handover inspection before checkout.');
       if (rental.depositMinor > 0) {
         const deposit = await tx.depositLedgerEntry.groupBy({ by: ['type'], where: { businessId, reservationId: rental.reservationId }, _sum: { amountMinor: true } });
         const collected = deposit.find((entry) => entry.type === 'COLLECTED')?._sum.amountMinor ?? 0;
@@ -78,9 +84,14 @@ export class RentalsService {
       if (rental.startOdometerKm !== null && input.odometerKm < rental.startOdometerKm) throw new BadRequestException('Return mileage cannot be lower than handover mileage.');
       const location = await tx.location.findFirst({ where: { id: input.returnLocationId, businessId, archivedAt: null }, select: { id: true } });
       if (!location) throw new NotFoundException('Return location was not found.');
+      const inspection = await tx.vehicleInspection.findFirst({ where: { businessId, rentalId: id, stage: 'RETURN' }, orderBy: { completedAt: 'desc' }, select: { checklist: true } });
+      if (!inspection) throw new ConflictException('Complete the return condition inspection before recording the vehicle return.');
+      const checklist = inspection.checklist as Record<string, string>;
+      const hasInspectionIssue = Object.values(checklist).some((value) => value === 'ISSUE');
+      const openDamageCount = await tx.damageCase.count({ where: { businessId, vehicleId: rental.vehicleId, status: { in: ['OPEN', 'QUOTED'] } } });
       const now = new Date();
       await tx.rental.update({ where: { id }, data: { status: 'RETURNED', actualReturnAt: now, checkedInAt: now, endOdometerKm: input.odometerKm, endFuelPercent: input.fuelPercent, actualReturnLocationId: location.id, returnNotes: input.notes?.trim() || undefined } });
-      await tx.vehicle.update({ where: { id: rental.vehicleId }, data: { odometerKm: input.odometerKm, locationId: location.id, condition: 'PREPARATION' } });
+      await tx.vehicle.update({ where: { id: rental.vehicleId }, data: { odometerKm: input.odometerKm, locationId: location.id, condition: hasInspectionIssue || openDamageCount ? 'DAMAGED' : 'PREPARATION' } });
       await tx.auditEvent.create({ data: { businessId, actorUserId: actor.userId, action: 'RENTAL_RETURNED', entityType: 'Rental', entityId: id, metadata: { odometerKm: input.odometerKm, fuelPercent: input.fuelPercent, returnLocationId: location.id } } });
       return tx.rental.findFirstOrThrow({ where: { id, businessId }, select: detailSelect });
     });
@@ -106,6 +117,45 @@ export class RentalsService {
       await tx.rental.update({ where: { id }, data: { expectedReturnAt: newExpectedReturnAt, estimatedTotalMinor: total } });
       await tx.auditEvent.create({ data: { businessId, actorUserId: actor.userId, action: 'RENTAL_EXTENDED', entityType: 'Rental', entityId: id, metadata: { oldExpectedReturnAt: rental.expectedReturnAt.toISOString(), newExpectedReturnAt: newExpectedReturnAt.toISOString(), reason: reason.trim() } } });
       return tx.rental.findFirstOrThrow({ where: { id, businessId }, select: detailSelect });
+    });
+  }
+
+  async settle(actor: Actor, id: string, input: { additionalChargesMinor: number; paymentReceivedMinor: number; method: RentalPaymentMethod; reference?: string; note?: string }) {
+    const businessId = this.businessId(actor);
+    if (!actor.permissions.includes('payment.manage') || !actor.permissions.includes('deposit.manage')) throw new ForbiddenException('Your role needs payment and deposit permissions to settle a rental.');
+    if (input.additionalChargesMinor > 0 && !input.note?.trim()) throw new BadRequestException('Add a note explaining the additional charge.');
+    return this.prisma.$transaction(async (tx) => {
+      const locked = await tx.$queryRaw<Array<{ id: string; status: RentalStatus; reservationId: string; estimatedTotalMinor: number; currency: string }>>(Prisma.sql`SELECT "id", "status", "reservationId", "estimatedTotalMinor", "currency" FROM "Rental" WHERE "id" = ${id} AND "businessId" = ${businessId} FOR UPDATE`);
+      const rental = locked[0];
+      if (!rental) throw new NotFoundException('Rental was not found.');
+      if (rental.status !== 'RETURNED') throw new ConflictException('Only a returned rental can be settled.');
+      const existing = await tx.rentalSettlement.findFirst({ where: { businessId, rentalId: id } });
+      if (existing) throw new ConflictException('This rental has already been settled.');
+      const unresolvedDamage = await tx.damageCase.count({ where: { businessId, rentalId: id, status: { in: ['OPEN', 'QUOTED'] } } });
+      if (unresolvedDamage) throw new ConflictException('Resolve or waive every damage case before settling this rental.');
+      const [paymentGroups, depositGroups] = await Promise.all([
+        tx.rentalPaymentEntry.groupBy({ by: ['type'], where: { businessId, reservationId: rental.reservationId }, _sum: { amountMinor: true } }),
+        tx.depositLedgerEntry.groupBy({ by: ['type'], where: { businessId, reservationId: rental.reservationId }, _sum: { amountMinor: true } }),
+      ]);
+      const paymentFor = (type: 'RECEIVED' | 'REFUNDED') => paymentGroups.find((entry) => entry.type === type)?._sum.amountMinor ?? 0;
+      const depositFor = (type: 'COLLECTED' | 'REFUNDED' | 'RETAINED') => depositGroups.find((entry) => entry.type === type)?._sum.amountMinor ?? 0;
+      const paidBefore = paymentFor('RECEIVED') - paymentFor('REFUNDED');
+      const held = depositFor('COLLECTED') - depositFor('REFUNDED') - depositFor('RETAINED');
+      const total = rental.estimatedTotalMinor + input.additionalChargesMinor;
+      if (!Number.isSafeInteger(total) || total > 2_000_000_000) throw new BadRequestException('The final rental total exceeds the supported amount.');
+      const outstanding = total - paidBefore;
+      if (input.paymentReceivedMinor > outstanding) throw new BadRequestException('The new payment cannot exceed the remaining rental balance.');
+      const balanceAfterPayment = outstanding - input.paymentReceivedMinor;
+      const retained = Math.min(held, balanceAfterPayment);
+      const refunded = held - retained;
+      if (balanceAfterPayment > held) throw new ConflictException('Record enough payment to cover the remaining balance before closing this rental.');
+      if (input.paymentReceivedMinor > 0) await tx.rentalPaymentEntry.create({ data: { businessId, reservationId: rental.reservationId, type: 'RECEIVED', amountMinor: input.paymentReceivedMinor, currency: rental.currency, method: input.method, reference: clean(input.reference), note: clean(input.note), recordedById: actor.userId } });
+      if (retained > 0) await tx.depositLedgerEntry.create({ data: { businessId, reservationId: rental.reservationId, type: 'RETAINED', amountMinor: retained, currency: rental.currency, reason: 'Applied to final rental balance during settlement', recordedById: actor.userId } });
+      if (refunded > 0) await tx.depositLedgerEntry.create({ data: { businessId, reservationId: rental.reservationId, type: 'REFUNDED', amountMinor: refunded, currency: rental.currency, reason: 'Security deposit returned at rental settlement', recordedById: actor.userId } });
+      const settlement = await tx.rentalSettlement.create({ data: { businessId, rentalId: id, currency: rental.currency, rentalAmountMinor: rental.estimatedTotalMinor, additionalChargesMinor: input.additionalChargesMinor, paymentReceivedMinor: input.paymentReceivedMinor, depositRetainedMinor: retained, depositRefundedMinor: refunded, note: clean(input.note) } });
+      await tx.rental.update({ where: { id }, data: { status: 'CLOSED' } });
+      await tx.auditEvent.create({ data: { businessId, actorUserId: actor.userId, action: 'RENTAL_SETTLED', entityType: 'Rental', entityId: id, metadata: { settlementId: settlement.id, rentalAmountMinor: settlement.rentalAmountMinor, additionalChargesMinor: settlement.additionalChargesMinor, paymentReceivedMinor: settlement.paymentReceivedMinor, depositRetainedMinor: settlement.depositRetainedMinor, depositRefundedMinor: settlement.depositRefundedMinor } } });
+      return settlement;
     });
   }
 

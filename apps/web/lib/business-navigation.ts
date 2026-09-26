@@ -4,6 +4,7 @@ const items: Array<{ key: string; label: string; href: Route; permission?: strin
   { key: 'today', label: 'Today', href: '/app/today' },
   { key: 'reservations', label: 'Reservations', href: '/app/reservations', permission: 'reservation.view' },
   { key: 'rentals', label: 'Rentals', href: '/app/rentals' as Route, permission: 'rental.view' },
+  { key: 'inspections', label: 'Inspections & damage', href: '/app/inspections' as Route, permission: 'inspection.manage' },
   { key: 'availability', label: 'Availability', href: '/app/availability', permission: 'vehicle.view' },
   { key: 'fleet', label: 'Fleet', href: '/app/fleet', permission: 'vehicle.view' },
   { key: 'customers', label: 'Customers & drivers', href: '/app/customers', permission: 'customer.view' },

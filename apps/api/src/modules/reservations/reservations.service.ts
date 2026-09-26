@@ -39,6 +39,45 @@ export class ReservationsService {
     return { startAt, endAt, billableDays: days, vehicles };
   }
 
+  async publicAvailability(slug: string, startInput: string, endInput: string) {
+    const { startAt, endAt, days } = validateWindow(startInput, endInput);
+    const business = await this.prisma.business.findFirst({ where: { slug, settings: { publicWebsiteEnabled: true } }, select: { id: true, name: true } });
+    if (!business) throw new NotFoundException('This rental page is not available.');
+    const vehicles = await this.prisma.vehicle.findMany({ where: { businessId: business.id, archivedAt: null, condition: 'READY', reservations: { none: { businessId: business.id, status: { in: blockingStatuses }, startAt: { lt: endAt }, endAt: { gt: startAt } } }, rentals: { none: { businessId: business.id, status: { in: [...blockingRentalStatuses] }, startAt: { lt: endAt }, expectedReturnAt: { gt: startAt } } } }, select: { id: true, make: true, model: true, variant: true, year: true, category: true, seats: true, transmission: true, fuelType: true, dailyRateMinor: true, depositMinor: true, currency: true, location: { select: { id: true, name: true } } }, orderBy: [{ make: 'asc' }, { model: 'asc' }], take: 100 });
+    return { business: { name: business.name, slug }, startAt, endAt, billableDays: days, vehicles };
+  }
+
+  async createPublicRequest(slug: string, input: { vehicleId: string; startAt: string; endAt: string; fullName: string; email: string; phone: string; notes?: string }, ipAddress?: string) {
+    const { startAt, endAt, days } = validateWindow(input.startAt, input.endAt);
+    const business = await this.prisma.business.findFirst({ where: { slug, settings: { publicWebsiteEnabled: true } }, select: { id: true, name: true } });
+    if (!business) throw new NotFoundException('This rental page is not available.');
+    const email = input.email.trim().toLowerCase();
+    const name = input.fullName.trim();
+    const phone = input.phone.trim();
+    if (!email || !name || !phone) throw new BadRequestException('Enter your name, email and phone number.');
+    return this.prisma.$transaction(async (tx) => {
+      await this.lockVehicle(tx, business.id, input.vehicleId);
+      const vehicle = await tx.vehicle.findFirst({ where: { id: input.vehicleId, businessId: business.id, archivedAt: null }, select: { id: true, make: true, model: true, locationId: true, condition: true, dailyRateMinor: true, depositMinor: true, currency: true } });
+      if (!vehicle) throw new NotFoundException('This vehicle is not available on this rental page.');
+      if (vehicle.condition !== 'READY') throw new ConflictException('This vehicle cannot currently accept public booking requests.');
+      const pickup = vehicle.locationId
+        ? await this.requireActiveLocation(tx, business.id, vehicle.locationId)
+        : await tx.location.findFirst({ where: { businessId: business.id, archivedAt: null }, select: { id: true } });
+      if (!pickup) throw new ConflictException('The rental business has not set up a pickup location yet.');
+      const customer = await tx.customer.upsert({ where: { businessId_email: { businessId: business.id, email } }, create: { businessId: business.id, fullName: name, email, phone }, update: {}, select: { id: true, status: true, archivedAt: true } });
+      if (customer?.archivedAt) throw new ConflictException('Please contact the rental team to continue with this request.');
+      if (customer?.status === 'RESTRICTED') throw new ConflictException('Please contact the rental team to continue with this request.');
+      const conflict = await tx.reservation.findFirst({ where: { businessId: business.id, vehicleId: vehicle.id, status: { in: blockingStatuses }, startAt: { lt: endAt }, endAt: { gt: startAt } }, select: { id: true } });
+      const activeRental = await tx.rental.findFirst({ where: { businessId: business.id, vehicleId: vehicle.id, status: { in: [...blockingRentalStatuses] }, startAt: { lt: endAt }, expectedReturnAt: { gt: startAt } }, select: { id: true } });
+      if (conflict || activeRental) throw new ConflictException('Those dates have just become unavailable. Choose another vehicle or date range.');
+      const total = days * vehicle.dailyRateMinor;
+      if (!Number.isSafeInteger(total) || total > 2_147_483_647) throw new BadRequestException('The estimated total exceeds the supported amount. Choose a shorter rental period.');
+      const reservation = await tx.reservation.create({ data: { businessId: business.id, customerId: customer.id, vehicleId: vehicle.id, pickupLocationId: pickup.id, startAt, endAt, dailyRateMinor: vehicle.dailyRateMinor, estimatedTotalMinor: total, depositMinor: vehicle.depositMinor, currency: vehicle.currency, customerName: name, customerPhone: phone, customerEmail: email, notes: input.notes?.trim() || null, source: 'PUBLIC', status: 'PENDING' }, select: { id: true, status: true, startAt: true, endAt: true, estimatedTotalMinor: true, depositMinor: true, currency: true, customerName: true, vehicle: { select: { make: true, model: true } } } });
+      await tx.auditEvent.create({ data: { businessId: business.id, action: 'PUBLIC_RESERVATION_REQUESTED', entityType: 'Reservation', entityId: reservation.id, ipAddress: ipAddress?.slice(0, 64), metadata: { vehicleId: vehicle.id, startAt: startAt.toISOString(), endAt: endAt.toISOString(), estimatedTotalMinor: total, source: 'PUBLIC_WEBSITE' } } });
+      return { ...reservation, businessName: business.name, message: 'Your request has been sent. The rental team will confirm availability and next steps.' };
+    });
+  }
+
   list(actor: Actor, status?: ReservationStatus) {
     return this.prisma.reservation.findMany({
       where: { businessId: this.businessId(actor), ...(status ? { status } : {}) },

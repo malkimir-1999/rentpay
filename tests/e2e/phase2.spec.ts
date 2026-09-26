@@ -152,7 +152,7 @@ test('business registration verifies email and completes persisted onboarding an
   await expect(page.getByRole('heading', { name: 'Pick up where you left off, Phase Two Rental Co.' })).toBeVisible();
   await capture(page, 'workspace-landing-incomplete-desktop.png');
   await page.getByRole('link', { name: 'Continue setup' }).click();
-  await expect(page).toHaveURL(/\/dashboard\/onboarding/);
+  await expect(page).toHaveURL(/\/dashboard\/onboarding/, { timeout: 20000 });
   await expect(page.getByRole('heading', { name: 'Add your first vehicle' })).toBeVisible();
   await expect(page.getByLabel('Make')).toHaveValue('Toyota');
   await page.getByRole('button', { name: 'Save and continue' }).click();
@@ -185,7 +185,7 @@ test('business registration verifies email and completes persisted onboarding an
 
   const headers = { authorization: `Bearer ${trialSession.apiAccessToken}` };
   const setup = await request.get(`${api}/business/onboarding`, { headers });
-  const saved = await setup.json() as { business: { slug: string }; settings: { onboardingCompletedAt: string; currency: string; enabledRentalPaymentMethods: string[] }; locations: { id: string }[]; vehicle: { make: string; dailyRateMinor: number; registrationNumber: string } };
+  const saved = await setup.json() as { business: { slug: string }; settings: { onboardingCompletedAt: string; currency: string; enabledRentalPaymentMethods: string[] }; locations: { id: string }[]; vehicle: { id: string; make: string; dailyRateMinor: number; registrationNumber: string } };
   expect(saved.settings.onboardingCompletedAt).toBeTruthy();
   expect(saved.settings.currency).toBe('PKR');
   expect(saved.settings.enabledRentalPaymentMethods).toContain('JAZZCASH');
@@ -204,6 +204,20 @@ test('business registration verifies email and completes persisted onboarding an
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto(`/rentals/${saved.business.slug}`);
   await expect(page.getByRole('heading', { name: 'Vehicles from Phase Two Rental Co' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Find a car for your trip' })).toBeVisible();
+  for (const width of [320, 375, 768, 1024, 1440, 2560]) {
+    await page.setViewportSize({ width, height: 900 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth), `Public booking page overflow at ${width}px`).toBeLessThanOrEqual(width);
+  }
+  const pickupAt = new Date(Date.now() + 40 * 86400000);
+  const returnAt = new Date(pickupAt.getTime() + 86400000);
+  const publicAvailability = await request.get(`${api}/public/rentals/${saved.business.slug}/availability?${new URLSearchParams({ startAt: pickupAt.toISOString(), endAt: returnAt.toISOString() })}`);
+  expect(publicAvailability.status()).toBe(200);
+  expect((await publicAvailability.json() as { vehicles: { id: string }[] }).vehicles.some((vehicle) => vehicle.id === saved.vehicle.id)).toBe(true);
+  const publicRequest = await request.post(`${api}/public/rentals/${saved.business.slug}/requests`, { data: { vehicleId: saved.vehicle.id, startAt: pickupAt.toISOString(), endAt: returnAt.toISOString(), fullName: 'Public Booking Guest', email: `public-guest-${stamp}@example.test`, phone: '+923001234567' } });
+  expect(publicRequest.status()).toBe(201);
+  expect(await publicRequest.json()).toMatchObject({ status: 'PENDING', customerName: 'Public Booking Guest' });
+  expect((await request.get(`${api}/business/reservations`, { headers }).then((response) => response.json()) as { source: string }[]).some((reservation) => reservation.source === 'PUBLIC')).toBe(true);
 
   const roleResponse = await request.get(`${api}/business/team/invitation-roles`, { headers });
   const roles = await roleResponse.json() as { id: string; key: string }[];

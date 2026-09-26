@@ -1,6 +1,7 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
-import { IsEnum, IsISO8601, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { Body, Controller, Get, Ip, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { IsEmail, IsEnum, IsISO8601, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 import { ReservationStatus } from '@prisma/client';
+import { Throttle } from '@nestjs/throttler';
 import { AuthGuard } from '../identity/auth.guard';
 import { CurrentActor, PermissionGuard, RequirePermission, TenantAccessGuard } from '../identity/access';
 import type { Actor } from '../identity/auth.types';
@@ -48,4 +49,29 @@ export class ReservationsController {
 
   @Post('reservations/:id/convert-to-rental') @RequirePermission('rental.manage')
   convertToRental(@CurrentActor() actor: Actor, @Param('id') id: string) { return this.reservations.convertToRental(actor, id); }
+}
+
+class PublicAvailabilityDto {
+  @IsISO8601() startAt!: string;
+  @IsISO8601() endAt!: string;
+}
+class PublicReservationRequestDto {
+  @IsString() @MinLength(8) @MaxLength(100) vehicleId!: string;
+  @IsISO8601() startAt!: string;
+  @IsISO8601() endAt!: string;
+  @IsString() @MinLength(2) @MaxLength(100) fullName!: string;
+  @IsEmail() @MaxLength(254) email!: string;
+  @IsString() @MinLength(7) @MaxLength(32) phone!: string;
+  @IsOptional() @IsString() @MaxLength(1000) notes?: string;
+}
+
+@Controller('public/rentals/:slug')
+export class PublicReservationsController {
+  constructor(private readonly reservations: ReservationsService) {}
+
+  @Get('availability') @Throttle({ default: { limit: 30, ttl: 60000 } })
+  availability(@Param('slug') slug: string, @Query() query: PublicAvailabilityDto) { return this.reservations.publicAvailability(slug, query.startAt, query.endAt); }
+
+  @Post('requests') @Throttle({ default: { limit: 5, ttl: 60000 } })
+  request(@Param('slug') slug: string, @Body() body: PublicReservationRequestDto, @Ip() ipAddress: string) { return this.reservations.createPublicRequest(slug, body, ipAddress); }
 }

@@ -460,6 +460,7 @@
   .formCard { padding: var(--rp-space-5); }
 }
 @media (max-width: 360px) {
+  .publicHeader .buttonSmall { display: none; }
   .heroInner, .sectionInner, .operationsInner, .fleetInner, .bookingInner, .financeInner, .faqInner, .contentPage, .footerInner { width: calc(100% - var(--rp-space-6)); }
   .hero h1 { font-size: 40px; }
   .heroStage { min-height: 0; }

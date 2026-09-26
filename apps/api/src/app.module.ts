@@ -11,6 +11,7 @@ import { ReservationsModule } from './modules/reservations/reservations.module';
 import { FinanceModule } from './modules/finance/finance.module';
 import { RentalsModule } from './modules/rentals/rentals.module';
 import { OperationsModule } from './modules/operations/operations.module';
+import { InspectionsModule } from './modules/inspections/inspections.module';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ThrottlerGuard } from '@nestjs/throttler';
@@ -20,5 +21,5 @@ import { RequestLoggingInterceptor } from './infra/request-logging.interceptor';
 import { envSchema } from '../../../packages/config/src/env';
 import { resolve } from 'node:path';
 
-@Module({ imports: [ConfigModule.forRoot({ isGlobal: true, envFilePath: [resolve(process.cwd(), '.env'), resolve(process.cwd(), '../../.env')], validate: (config) => envSchema.parse(config) }), PrismaModule, ThrottlerModule.forRootAsync({ useFactory: () => ({ throttlers: [{ ttl: 60000, limit: process.env.NODE_ENV === 'test' ? 1000 : 120 }], ...(process.env.REDIS_URL ? { storage: new RedisRateLimitStorage(process.env.REDIS_URL) } : {}) }) }), AuthModule, TenancyModule, FleetModule, LocationsModule, CustomersModule, ReservationsModule, FinanceModule, RentalsModule, OperationsModule], controllers: [HealthController, DevMailboxController], providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }, { provide: APP_INTERCEPTOR, useClass: RequestLoggingInterceptor }] })
+@Module({ imports: [ConfigModule.forRoot({ isGlobal: true, envFilePath: [resolve(process.cwd(), '.env'), resolve(process.cwd(), '../../.env')], validate: (config) => envSchema.parse(config) }), PrismaModule, ThrottlerModule.forRootAsync({ useFactory: () => ({ throttlers: [{ ttl: 60000, limit: process.env.NODE_ENV === 'test' ? 1000 : 120 }], ...(process.env.REDIS_URL ? { storage: new RedisRateLimitStorage(process.env.REDIS_URL) } : {}) }) }), AuthModule, TenancyModule, FleetModule, LocationsModule, CustomersModule, ReservationsModule, FinanceModule, RentalsModule, OperationsModule, InspectionsModule], controllers: [HealthController, DevMailboxController], providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }, { provide: APP_INTERCEPTOR, useClass: RequestLoggingInterceptor }] })
 export class AppModule {}

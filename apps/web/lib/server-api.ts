@@ -9,10 +9,19 @@ export async function forwardBusinessApi(request: Request, path: string) {
   if (!session?.apiAccessToken || session.user.accountType !== 'BUSINESS') {
     return NextResponse.json({ error: { code: 'UNAUTHENTICATED', message: 'Sign in to continue.' } }, { status: 401 });
   }
+  return forwardApiRequest(request, path, session.apiAccessToken);
+}
+
+export function forwardPublicApi(request: Request, path: string) {
+  return forwardApiRequest(request, path);
+}
+
+async function forwardApiRequest(request: Request, path: string, accessToken?: string) {
   const upstream = new URL(path, apiOrigin);
   const incoming = new URL(request.url);
   upstream.search = incoming.search;
-  const headers = new Headers({ authorization: `Bearer ${session.apiAccessToken}` });
+  const headers = new Headers();
+  if (accessToken) headers.set('authorization', `Bearer ${accessToken}`);
   const contentType = request.headers.get('content-type');
   if (contentType) headers.set('content-type', contentType);
   try {
