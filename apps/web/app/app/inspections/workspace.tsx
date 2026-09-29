@@ -9,7 +9,7 @@ import styles from './inspections.module.css';
 import { inspectionAreas, type VehicleConditionChecklist } from '../../../../../packages/config/src/inspection';
 
 type VehicleOption = { id: string; make: string; model: string; registrationNumber: string; currency: string; odometerKm: number };
-type Inspection = { id: string; vehicleId: string; rentalId: string | null; stage: 'PRE_HANDOVER' | 'RETURN'; checklist: Record<string, 'OK' | 'ISSUE'>; notes: string | null; odometerKm: number; fuelPercent: number; completedAt: string; vehicle: { make: string; model: string; registrationNumber: string }; evidence: { id: string; fileAsset: { id: string; mimeType: string; sizeBytes: number } | null }[] };
+type Inspection = { id: string; vehicleId: string; rentalId: string | null; stage: 'PRE_HANDOVER' | 'RETURN' | 'MAINTENANCE_RELEASE'; checklist: Record<string, 'OK' | 'ISSUE'>; notes: string | null; odometerKm: number; fuelPercent: number; completedAt: string; vehicle: { make: string; model: string; registrationNumber: string }; evidence: { id: string; fileAsset: { id: string; mimeType: string; sizeBytes: number } | null }[] };
 type DamageCase = { id: string; vehicleId: string; rentalId: string | null; title: string; description: string; status: 'OPEN' | 'QUOTED' | 'RESOLVED' | 'WAIVED'; estimatedMinor: number | null; finalMinor: number | null; resolutionNotes: string | null; vehicle: { make: string; model: string; registrationNumber: string } };
 type StoredEvidence = { id: string; name: string };
 type Checklist = VehicleConditionChecklist;
@@ -48,7 +48,7 @@ export function InspectionsWorkspace({ vehicles, initialInspections, initialDama
       setInspections((current) => [record, ...current]); setEvidence([]); inspectionForm.resetFields();
       const newIssues = Object.values(values.checklist).filter((value) => value === 'ISSUE').length;
       if (newIssues) { const damages = await fetch('/api/app/inspections/damage-cases').then((res) => res.json()) as DamageCase[]; setDamageCases(damages); }
-      await toast.success(newIssues ? `Inspection saved. ${newIssues} damage case${newIssues === 1 ? '' : 's'} opened for review.` : 'Vehicle inspection saved.');
+      await toast.success(newIssues ? `Inspection saved. ${newIssues} damage case${newIssues === 1 ? '' : 's'} opened for review.` : values.stage === 'MAINTENANCE_RELEASE' ? 'Service release passed. Vehicle is ready for bookings.' : 'Vehicle inspection saved.');
     } catch (cause) { const detail = cause instanceof Error ? cause.message : 'The inspection could not be saved.'; setError(detail); await toast.error(detail); }
     finally { setSaving(false); }
   }
@@ -78,7 +78,7 @@ export function InspectionsWorkspace({ vehicles, initialInspections, initialDama
 
   const inspectionColumns: ColumnsType<Inspection> = [
     { title: 'Vehicle', key: 'vehicle', render: (_, row) => `${row.vehicle.make} ${row.vehicle.model} · ${row.vehicle.registrationNumber}` },
-    { title: 'Stage', dataIndex: 'stage', render: (stage: Inspection['stage']) => stage === 'PRE_HANDOVER' ? 'Before handover' : 'Vehicle return' },
+    { title: 'Stage', dataIndex: 'stage', render: (stage: Inspection['stage']) => stage === 'PRE_HANDOVER' ? 'Before handover' : stage === 'RETURN' ? 'Vehicle return' : 'After service' },
     { title: 'Mileage', dataIndex: 'odometerKm', render: (value: number) => `${value.toLocaleString()} km` },
     { title: 'Result', key: 'result', render: (_, row) => Object.values(row.checklist).includes('ISSUE') ? <Tag color="red">Issues found</Tag> : <Tag color="green">No issues found</Tag> },
     { title: 'Evidence', key: 'evidence', render: (_, row) => `${row.evidence.length} file${row.evidence.length === 1 ? '' : 's'}` },
@@ -98,10 +98,10 @@ export function InspectionsWorkspace({ vehicles, initialInspections, initialDama
     {error ? <Alert type="error" showIcon message={error} /> : null}
     <div className={styles.forms}>
       <Card className={styles.card} title={<h2>Record vehicle inspection</h2>}>
-        <p>Check each area before handover or when a vehicle comes back. Mark issues clearly; RentPay will open a damage case for follow-up.</p>
+        <p>Check each area before handover, at return, or after service. Mark issues clearly; RentPay will open a damage case for follow-up. A clear after-service check returns the vehicle to bookings.</p>
         <Form form={inspectionForm} layout="vertical" onFinish={(values) => void saveInspection(values)}>
           <Form.Item label="Vehicle" name="vehicleId" rules={[{ required: true }]}><Select showSearch optionFilterProp="label" options={vehicleOptions} placeholder="Choose a vehicle" /></Form.Item>
-          <Form.Item label="Inspection stage" name="stage" rules={[{ required: true }]}><Select options={[{ value: 'PRE_HANDOVER', label: 'Before handover' }, { value: 'RETURN', label: 'Vehicle return' }]} placeholder="Choose a stage" /></Form.Item>
+          <Form.Item label="Inspection stage" name="stage" rules={[{ required: true }]}><Select options={[{ value: 'PRE_HANDOVER', label: 'Before handover' }, { value: 'RETURN', label: 'Vehicle return' }, { value: 'MAINTENANCE_RELEASE', label: 'After service — release to bookings' }]} placeholder="Choose a stage" /></Form.Item>
           <div className={styles.checklist}>{inspectionAreas.map((area) => <Form.Item key={area.key} label={area.label} name={['checklist', area.key]} rules={[{ required: true, message: 'Choose OK or issue found.' }]}><Select options={[{ value: 'OK', label: 'Looks good' }, { value: 'ISSUE', label: 'Issue found' }]} /></Form.Item>)}</div>
           <div className={styles.checklist}><Form.Item label="Odometer (km)" name="odometerKm" rules={[{ required: true }, { type: 'number', min: 0 }]}><InputNumber min={0} precision={0} /></Form.Item><Form.Item label="Fuel level (%)" name="fuelPercent" rules={[{ required: true }, { type: 'number', min: 0, max: 100 }]}><InputNumber min={0} max={100} precision={0} /></Form.Item></div>
           <Form.Item label="Notes about the vehicle condition" name="notes"><Input.TextArea maxLength={2000} rows={3} /></Form.Item>

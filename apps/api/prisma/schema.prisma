@@ -113,6 +113,7 @@ enum DepositEntryType {
 enum InspectionStage {
   PRE_HANDOVER
   RETURN
+  MAINTENANCE_RELEASE
 }
 
 enum DamageStatus {
@@ -616,28 +617,31 @@ model FileAsset {
 }
 
 model VehicleInspection {
-  id          String               @id @default(cuid())
-  businessId  String
-  vehicleId   String
-  rentalId    String?
-  stage       InspectionStage
-  checklist   Json
-  notes       String?
-  odometerKm  Int
-  fuelPercent Int
-  completedAt DateTime             @default(now())
-  createdById String?
-  createdAt   DateTime             @default(now())
-  business    Business             @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  vehicle     Vehicle              @relation(fields: [vehicleId, businessId], references: [id, businessId], onDelete: Restrict)
-  rental      Rental?              @relation(fields: [businessId, rentalId], references: [businessId, id], onDelete: Restrict)
-  createdBy   User?                @relation("InspectionCreator", fields: [createdById], references: [id], onDelete: SetNull)
-  evidence    InspectionEvidence[]
-  damageCases DamageCase[]
+  id                     String                @id @default(cuid())
+  businessId             String
+  vehicleId              String
+  rentalId               String?
+  maintenanceWorkOrderId String?
+  stage                  InspectionStage
+  checklist              Json
+  notes                  String?
+  odometerKm             Int
+  fuelPercent            Int
+  completedAt            DateTime              @default(now())
+  createdById            String?
+  createdAt              DateTime              @default(now())
+  business               Business              @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  vehicle                Vehicle               @relation(fields: [vehicleId, businessId], references: [id, businessId], onDelete: Restrict)
+  rental                 Rental?               @relation(fields: [businessId, rentalId], references: [businessId, id], onDelete: Restrict)
+  maintenanceWorkOrder   MaintenanceWorkOrder? @relation(fields: [maintenanceWorkOrderId, businessId], references: [id, businessId], onDelete: Restrict)
+  createdBy              User?                 @relation("InspectionCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  evidence               InspectionEvidence[]
+  damageCases            DamageCase[]
 
   @@unique([id, businessId])
   @@index([businessId, vehicleId, completedAt])
   @@index([businessId, rentalId, stage])
+  @@index([businessId, maintenanceWorkOrderId, completedAt])
 }
 
 model InspectionEvidence {
@@ -682,17 +686,17 @@ model DamageCase {
 }
 
 model MaintenanceWorkOrder {
-  id                 String            @id @default(cuid())
+  id                 String              @id @default(cuid())
   businessId         String
   vehicleId          String
   title              String
   description        String?
-  status             MaintenanceStatus @default(PLANNED)
+  status             MaintenanceStatus   @default(PLANNED)
   dueAt              DateTime?
   dueOdometerKm      Int?
   scheduledStartAt   DateTime?
   expectedEndAt      DateTime?
-  blocksAvailability Boolean           @default(true)
+  blocksAvailability Boolean             @default(true)
   vendorName         String?
   estimatedCostMinor Int?
   actualCostMinor    Int?
@@ -701,11 +705,12 @@ model MaintenanceWorkOrder {
   startedAt          DateTime?
   completedAt        DateTime?
   createdById        String?
-  createdAt          DateTime          @default(now())
-  updatedAt          DateTime          @updatedAt
-  business           Business          @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  vehicle            Vehicle           @relation(fields: [vehicleId, businessId], references: [id, businessId], onDelete: Restrict)
-  createdBy          User?             @relation("MaintenanceCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  business           Business            @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  vehicle            Vehicle             @relation(fields: [vehicleId, businessId], references: [id, businessId], onDelete: Restrict)
+  createdBy          User?               @relation("MaintenanceCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  releaseInspections VehicleInspection[]
 
   @@unique([id, businessId])
   @@index([businessId, status, dueAt])

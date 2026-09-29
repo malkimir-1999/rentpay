@@ -17,10 +17,10 @@ async function owner(request: import('@playwright/test').APIRequestContext, suff
   const login = await request.post(`${api}/auth/login`, { data: { email, password, accountType: 'BUSINESS' } });
   expect(login.ok()).toBeTruthy();
   const { accessToken } = await login.json() as { accessToken: string };
-  return { businessId, headers: { authorization: `Bearer ${accessToken}`, 'x-business-id': businessId } };
+  return { businessId, email, headers: { authorization: `Bearer ${accessToken}`, 'x-business-id': businessId } };
 }
 
-test('maintenance is tenant isolated, blocks booking windows, and requires permission', async ({ request }) => {
+test('maintenance is tenant isolated, blocks booking windows, and requires permission', async ({ request, page }) => {
   const [a, b] = await Promise.all([owner(request, 'a'), owner(request, 'b')]);
   const vehicleResponse = await request.post(`${api}/business/fleet`, { headers: a.headers, data: { make: 'Toyota', model: 'Yaris', registrationNumber: `MAINT-${Date.now()}`, dailyRateMinor: 800000 } });
   expect(vehicleResponse.status()).toBe(201);
@@ -65,4 +65,25 @@ test('maintenance is tenant isolated, blocks booking windows, and requires permi
   expect((await request.post(`${api}/business/maintenance/${secondOrder.id}/complete`, { headers: a.headers, data: { completionNotes: 'Cooling system tested and repaired', actualCostMinor: 250000 } })).status()).toBe(201);
   const finishedVehicle = await request.get(`${api}/business/fleet/${vehicle.id}`, { headers: a.headers }).then((res) => res.json()) as { condition: string };
   expect(finishedVehicle.condition).toBe('PREPARATION');
+  expect((await request.patch(`${api}/business/fleet/${vehicle.id}`, { headers: a.headers, data: { condition: 'READY' } })).status()).toBe(409);
+  const checklist = { exterior: 'OK', glass: 'OK', tires: 'OK', lights: 'OK', interior: 'OK', documents: 'OK', accessories: 'OK' };
+  expect((await request.post(`${api}/business/inspections`, { headers: b.headers, data: { vehicleId: vehicle.id, stage: 'MAINTENANCE_RELEASE', checklist, odometerKm: 0, fuelPercent: 50 } })).status()).toBe(404);
+  const release = await request.post(`${api}/business/inspections`, { headers: a.headers, data: { vehicleId: vehicle.id, stage: 'MAINTENANCE_RELEASE', checklist, odometerKm: 0, fuelPercent: 50 } });
+  expect(release.status()).toBe(201);
+  expect((await release.json() as { maintenanceWorkOrderId: string }).maintenanceWorkOrderId).toBe(secondOrder.id);
+  const readyVehicle = await request.get(`${api}/business/fleet/${vehicle.id}`, { headers: a.headers }).then((res) => res.json()) as { condition: string };
+  expect(readyVehicle.condition).toBe('READY');
+  await page.goto('/login');
+  await page.getByLabel('Email').fill(a.email);
+  await page.getByLabel('Password').fill(password);
+  await page.getByRole('button', { name: 'Sign in' }).click();
+  await expect(page).toHaveURL(/\/dashboard\/onboarding/);
+  await page.goto('/app/maintenance');
+  await expect(page.getByRole('heading', { name: 'Maintenance', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Plan service' })).toBeVisible();
+  for (const width of [320, 375, 768, 1024, 1440, 2560]) {
+    await page.setViewportSize({ width, height: 900 });
+    const layout = await page.evaluate(() => ({ scrollWidth: document.documentElement.scrollWidth, overflow: [...document.querySelectorAll('body *')].map((element) => ({ tag: element.tagName, className: typeof element.className === 'string' ? element.className : '', right: Math.round(element.getBoundingClientRect().right) })).filter((element) => element.right > innerWidth + 1).slice(0, 10) }));
+    expect(layout.scrollWidth, `Maintenance overflow at ${width}px: ${JSON.stringify(layout.overflow)}`).toBeLessThanOrEqual(width);
+  }
 });

@@ -1,18 +1,19 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { Alert, Button, Card, Form, Input, InputNumber, Modal, Select, Switch, Table, Tag, message } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { MoneyDisplay } from '../../../components/ui';
 import styles from './maintenance.module.css';
 
 type Vehicle = { id: string; make: string; model: string; registrationNumber: string; odometerKm: number; currency: string };
-type WorkOrder = { id: string; vehicleId: string; title: string; status: 'PLANNED' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED'; dueAt: string | null; dueOdometerKm: number | null; scheduledStartAt: string | null; expectedEndAt: string | null; blocksAvailability: boolean; vendorName: string | null; estimatedCostMinor: number | null; actualCostMinor: number | null; currency: string; vehicle: Vehicle };
+type WorkOrder = { id: string; vehicleId: string; title: string; status: 'PLANNED' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED'; dueAt: string | null; dueOdometerKm: number | null; scheduledStartAt: string | null; expectedEndAt: string | null; blocksAvailability: boolean; startedAt: string | null; vendorName: string | null; estimatedCostMinor: number | null; actualCostMinor: number | null; currency: string; vehicle: Vehicle };
 type WorkOrderForm = { vehicleId: string; title: string; dueAt?: string; dueOdometerKm?: number; scheduledStartAt?: string; expectedEndAt?: string; blocksAvailability: boolean; vendorName?: string; estimatedCost?: number };
 function errorMessage(value: unknown) { const detail = (value as { error?: { message?: string | string[] } } | null)?.error?.message; return (Array.isArray(detail) ? detail[0] : detail) ?? 'We could not save this change. Please try again.'; }
 function dateLabel(value: string | null) { return value ? new Date(value).toLocaleString() : 'Not set'; }
 
-export function MaintenanceWorkspace({ initialOrders, vehicles, canManage }: { initialOrders: WorkOrder[]; vehicles: Vehicle[]; canManage: boolean }) {
+export function MaintenanceWorkspace({ initialOrders, vehicles, canManage, canInspect }: { initialOrders: WorkOrder[]; vehicles: Vehicle[]; canManage: boolean; canInspect: boolean }) {
   const [orders, setOrders] = useState(initialOrders);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -54,7 +55,7 @@ export function MaintenanceWorkspace({ initialOrders, vehicles, canManage }: { i
     { title: 'Cost', key: 'cost', render: (_, row) => row.actualCostMinor !== null ? <MoneyDisplay amountMinor={row.actualCostMinor} currency={row.currency} /> : row.estimatedCostMinor !== null ? <><MoneyDisplay amountMinor={row.estimatedCostMinor} currency={row.currency} /> estimated</> : 'Not set' },
     { title: 'Availability', dataIndex: 'blocksAvailability', render: (value: boolean) => value ? 'Blocks during service' : 'No booking block' },
     { title: 'Status', dataIndex: 'status', render: (value: WorkOrder['status']) => <Tag color={value === 'COMPLETED' ? 'green' : value === 'IN_PROGRESS' ? 'blue' : value === 'CANCELLED' ? 'default' : 'gold'}>{value.replaceAll('_', ' ')}</Tag> },
-    { title: 'Next step', key: 'action', render: (_, row) => !canManage ? 'View only' : row.status === 'PLANNED' ? <div className={styles.actions}><Button size="small" onClick={() => void transition(row, 'start')} loading={saving}>Start service</Button><Button size="small" onClick={() => setFinishing({ order: row, action: 'cancel' })}>Cancel</Button></div> : row.status === 'IN_PROGRESS' ? <div className={styles.actions}><Button size="small" type="primary" onClick={() => setFinishing({ order: row, action: 'complete' })}>Complete</Button><Button size="small" onClick={() => setFinishing({ order: row, action: 'cancel' })}>Cancel</Button></div> : 'Finished' },
+    { title: 'Next step', key: 'action', render: (_, row) => !canManage ? 'View only' : row.status === 'PLANNED' ? <div className={styles.actions}><Button size="small" onClick={() => void transition(row, 'start')} loading={saving}>Start service</Button><Button size="small" onClick={() => setFinishing({ order: row, action: 'cancel' })}>Cancel</Button></div> : row.status === 'IN_PROGRESS' ? <div className={styles.actions}><Button size="small" type="primary" onClick={() => setFinishing({ order: row, action: 'complete' })}>Complete</Button><Button size="small" onClick={() => setFinishing({ order: row, action: 'cancel' })}>Cancel</Button></div> : row.blocksAvailability && row.startedAt ? canInspect ? <Link href="/app/inspections">Inspect to release</Link> : 'Ask an inspector to release' : 'Finished' },
   ];
 
   return <section className={styles.workspace}>

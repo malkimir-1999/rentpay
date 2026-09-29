@@ -122,6 +122,14 @@ export class FleetService {
     return this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "Vehicle" WHERE "id" = ${id} AND "businessId" = ${businessId} AND "archivedAt" IS NULL FOR UPDATE`);
       if (input.condition && input.condition !== 'MAINTENANCE' && await tx.maintenanceWorkOrder.count({ where: { businessId, vehicleId: id, status: 'IN_PROGRESS', blocksAvailability: true } })) throw new ConflictException('Finish blocking maintenance before changing this vehicle condition.');
+      if (input.condition === 'READY') {
+        if (await tx.damageCase.count({ where: { businessId, vehicleId: id, status: { in: ['OPEN', 'QUOTED'] } } })) throw new ConflictException('Resolve open damage cases before marking this vehicle ready.');
+        const lastService = await tx.maintenanceWorkOrder.findFirst({ where: { businessId, vehicleId: id, blocksAvailability: true, startedAt: { not: null }, status: { in: ['COMPLETED', 'CANCELLED'] } }, orderBy: { updatedAt: 'desc' }, select: { id: true } });
+        if (lastService) {
+          const release = await tx.vehicleInspection.findFirst({ where: { businessId, vehicleId: id, maintenanceWorkOrderId: lastService.id, stage: 'MAINTENANCE_RELEASE' }, orderBy: { completedAt: 'desc' }, select: { damageCases: { select: { id: true }, take: 1 } } });
+          if (!release || release.damageCases.length) throw new ConflictException('Complete a clear service release inspection before marking this vehicle ready.');
+        }
+      }
       if (input.locationId !== undefined) await this.lockActiveLocation(tx, businessId, input.locationId);
       const result = await tx.vehicle.updateMany({ where: { id, businessId, archivedAt: null }, data });
       if (!result.count) throw new NotFoundException('Vehicle was not found.');

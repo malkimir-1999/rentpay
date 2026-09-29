@@ -5,7 +5,7 @@ import type { Actor } from '../identity/auth.types';
 import { inspectionAreas, type VehicleConditionChecklist } from '../../../../../packages/config/src/inspection';
 
 const inspectionSelect = {
-  id: true, vehicleId: true, rentalId: true, stage: true, checklist: true, notes: true,
+  id: true, vehicleId: true, rentalId: true, maintenanceWorkOrderId: true, stage: true, checklist: true, notes: true,
   odometerKm: true, fuelPercent: true, completedAt: true, createdAt: true,
   vehicle: { select: { make: true, model: true, registrationNumber: true } },
   evidence: { select: { id: true, caption: true, fileAsset: { select: { id: true, mimeType: true, sizeBytes: true } } } },
@@ -31,9 +31,20 @@ export class InspectionsService {
     if (input.evidenceAssetIds && (input.evidenceAssetIds.length > 10 || new Set(input.evidenceAssetIds).size !== input.evidenceAssetIds.length)) throw new BadRequestException('Attach at most 10 different evidence files.');
     if (Object.keys(input.checklist).length !== inspectionAreas.length || inspectionAreas.some(({ key }) => !['OK', 'ISSUE'].includes(input.checklist[key]))) throw new BadRequestException('Complete every vehicle condition checklist item.');
     return this.prisma.$transaction(async (tx) => {
-      const vehicle = await tx.vehicle.findFirst({ where: { id: input.vehicleId, businessId, archivedAt: null }, select: { id: true, odometerKm: true } });
+      await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "Vehicle" WHERE "id" = ${input.vehicleId} AND "businessId" = ${businessId} AND "archivedAt" IS NULL FOR UPDATE`);
+      const vehicle = await tx.vehicle.findFirst({ where: { id: input.vehicleId, businessId, archivedAt: null }, select: { id: true, odometerKm: true, condition: true } });
       if (!vehicle) throw new NotFoundException('Vehicle was not found.');
       if (input.odometerKm < vehicle.odometerKm) throw new BadRequestException('Inspection mileage cannot be lower than the last recorded vehicle mileage.');
+      if (input.stage === 'MAINTENANCE_RELEASE' && input.rentalId) throw new BadRequestException('A service release inspection does not belong to a rental.');
+      let maintenanceWorkOrderId: string | undefined;
+      if (input.stage === 'MAINTENANCE_RELEASE') {
+        const workOrder = await tx.maintenanceWorkOrder.findFirst({ where: { businessId, vehicleId: vehicle.id, blocksAvailability: true, startedAt: { not: null }, status: { in: ['COMPLETED', 'CANCELLED'] } }, orderBy: { updatedAt: 'desc' }, select: { id: true } });
+        if (!workOrder) throw new ConflictException('Complete blocking maintenance before recording a release inspection.');
+        if (!['PREPARATION', 'DAMAGED'].includes(vehicle.condition)) throw new ConflictException('This vehicle is not awaiting release after service.');
+        if (await tx.maintenanceWorkOrder.count({ where: { businessId, vehicleId: vehicle.id, status: 'IN_PROGRESS', blocksAvailability: true } })) throw new ConflictException('Complete all blocking service before releasing this vehicle.');
+        if (await tx.damageCase.count({ where: { businessId, vehicleId: vehicle.id, status: { in: ['OPEN', 'QUOTED'] } } })) throw new ConflictException('Resolve open damage cases before the service release inspection.');
+        maintenanceWorkOrderId = workOrder.id;
+      }
       if (input.rentalId) {
         const rental = await tx.rental.findFirst({ where: { id: input.rentalId, businessId, vehicleId: vehicle.id }, select: { id: true, status: true } });
         if (!rental) throw new NotFoundException('Rental was not found for this vehicle.');
@@ -45,14 +56,14 @@ export class InspectionsService {
         const ownedAssets = await tx.fileAsset.findMany({ where: { id: { in: assetIds }, businessId }, select: { id: true } });
         if (ownedAssets.length !== assetIds.length) throw new NotFoundException('One or more evidence files were not found in this business.');
       }
-      const inspection = await tx.vehicleInspection.create({ data: { businessId, vehicleId: vehicle.id, rentalId: input.rentalId, stage: input.stage, checklist: input.checklist as Prisma.InputJsonValue, odometerKm: input.odometerKm, fuelPercent: input.fuelPercent, notes: input.notes?.trim() || null, createdById: actor.userId, evidence: { create: assetIds.map((fileAssetId) => ({ businessId, fileAssetId })) } }, select: inspectionSelect });
+      const inspection = await tx.vehicleInspection.create({ data: { businessId, vehicleId: vehicle.id, rentalId: input.rentalId, maintenanceWorkOrderId, stage: input.stage, checklist: input.checklist as Prisma.InputJsonValue, odometerKm: input.odometerKm, fuelPercent: input.fuelPercent, notes: input.notes?.trim() || null, createdById: actor.userId, evidence: { create: assetIds.map((fileAssetId) => ({ businessId, fileAssetId })) } }, select: inspectionSelect });
       const issues = inspectionAreas.filter(({ key }) => input.checklist[key] === 'ISSUE').map(({ key }) => key);
       for (const issue of issues) {
-        const damage = await tx.damageCase.create({ data: { businessId, vehicleId: vehicle.id, rentalId: input.rentalId, inspectionId: inspection.id, title: `${issue.charAt(0).toUpperCase()}${issue.slice(1)} needs review`, description: input.notes?.trim() || `The ${issue} condition was marked for review during the ${input.stage === 'PRE_HANDOVER' ? 'pre-handover' : 'return'} inspection.`, reportedById: actor.userId }, select: { id: true } });
+        const damage = await tx.damageCase.create({ data: { businessId, vehicleId: vehicle.id, rentalId: input.rentalId, inspectionId: inspection.id, title: `${issue.charAt(0).toUpperCase()}${issue.slice(1)} needs review`, description: input.notes?.trim() || `The ${issue} condition was marked for review during the ${input.stage === 'PRE_HANDOVER' ? 'pre-handover' : input.stage === 'RETURN' ? 'return' : 'service release'} inspection.`, reportedById: actor.userId }, select: { id: true } });
         await tx.auditEvent.create({ data: { businessId, actorUserId: actor.userId, action: 'DAMAGE_CASE_CREATED', entityType: 'DamageCase', entityId: damage.id, metadata: { vehicleId: vehicle.id, rentalId: input.rentalId ?? null, inspectionId: inspection.id, area: issue } } });
       }
-      await tx.vehicle.update({ where: { id: vehicle.id }, data: { odometerKm: input.odometerKm, ...(issues.length ? { condition: 'DAMAGED' } : {}) } });
-      await tx.auditEvent.create({ data: { businessId, actorUserId: actor.userId, action: 'VEHICLE_INSPECTION_COMPLETED', entityType: 'VehicleInspection', entityId: inspection.id, metadata: { vehicleId: vehicle.id, rentalId: input.rentalId ?? null, stage: input.stage, evidenceCount: assetIds.length, issueCount: issues.length, checklist: input.checklist } } });
+      await tx.vehicle.update({ where: { id: vehicle.id }, data: { odometerKm: input.odometerKm, ...(issues.length ? { condition: 'DAMAGED' } : input.stage === 'MAINTENANCE_RELEASE' ? { condition: 'READY' } : {}) } });
+      await tx.auditEvent.create({ data: { businessId, actorUserId: actor.userId, action: input.stage === 'MAINTENANCE_RELEASE' ? 'MAINTENANCE_RELEASE_INSPECTED' : 'VEHICLE_INSPECTION_COMPLETED', entityType: 'VehicleInspection', entityId: inspection.id, metadata: { vehicleId: vehicle.id, rentalId: input.rentalId ?? null, maintenanceWorkOrderId: maintenanceWorkOrderId ?? null, stage: input.stage, evidenceCount: assetIds.length, issueCount: issues.length, released: input.stage === 'MAINTENANCE_RELEASE' && issues.length === 0, checklist: input.checklist } } });
       return inspection;
     });
   }

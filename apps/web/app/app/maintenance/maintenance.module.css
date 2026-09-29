@@ -1,5 +1,7 @@
-.workspace { display: grid; gap: var(--rp-space-5); padding-block: var(--rp-space-5); }
-.card { width: 100%; }
+.workspace { display: grid; gap: var(--rp-space-5); min-width: 0; max-width: 100%; padding-block: var(--rp-space-5); }
+.card { width: 100%; min-width: 0; max-width: 100%; overflow: hidden; }
+.card :global(.ant-card-body) { min-width: 0; }
+.card :global(.ant-table-wrapper) { min-width: 0; max-width: 100%; overflow-x: auto; }
 .card h2 { margin: 0; font-size: var(--rp-font-size-h3); }
 .fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 var(--rp-space-4); }
 .fields > div { min-width: 0; }
