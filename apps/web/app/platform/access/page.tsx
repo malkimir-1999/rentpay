@@ -1,13 +1,20 @@
 import { auth } from '../../../auth';
 import { redirect } from 'next/navigation';
 import { AppShell, PageContainer } from '../../../components/ui';
-import styles from '../../../components/ui.module.css';
+import { PlatformWorkspace, type PlatformData } from './workspace';
+
 export const metadata = { title: 'Platform access', robots: { index: false, follow: false } };
+
 export default async function PlatformAccessPage() {
   const session = await auth();
-  if (session?.user?.accountType !== 'PLATFORM' || session.user.platformRole !== 'SUPER_ADMIN') redirect('/platform/login');
-  return <AppShell workspace="Platform administration" selectedKey="overview" navigation={[{ key: 'overview', label: 'Overview', href: '/platform/access' }]}><PageContainer>
-    <section className={styles.workspaceHero}><div><span className={styles.workspaceEyebrow}>Super Admin</span><h1>Platform workspace</h1><p>Your platform identity is verified. Business workspaces remain accessible only through their own membership.</p></div></section>
-    <div className={styles.workspaceCards}><section className={styles.workspaceCard}><span>Access</span><strong>Separate platform account</strong><p>Platform access is kept apart from each rental business.</p></section><section className={styles.workspaceCard}><span>Subscriptions</span><strong>Manual verification</strong><p>Bank Transfer, Easypaisa and JazzCash submissions have a dedicated approval flow.</p></section><section className={styles.workspaceCard}><span>Activity</span><strong>Audited actions</strong><p>Meaningful security and subscription decisions are recorded.</p></section></div>
-  </PageContainer></AppShell>;
+  if (session?.user?.accountType !== 'PLATFORM' || session.user.platformRole !== 'SUPER_ADMIN' || !session.apiAccessToken) redirect('/platform/login');
+  const headers = { authorization: `Bearer ${session.apiAccessToken}` };
+  const origin = process.env.API_URL ?? 'http://localhost:4000';
+  const paths = ['/api/platform/overview', '/api/platform/businesses', '/api/platform/subscription-payments/pending', '/api/platform/plans', '/api/platform/audit'];
+  const responses = await Promise.all(paths.map((path) => fetch(new URL(path, origin), { headers, cache: 'no-store' })));
+  if (responses.some((response) => response.status === 401 || response.status === 403)) redirect('/platform/login');
+  if (responses.some((response) => !response.ok)) return <AppShell workspace="Platform administration" selectedKey="overview" navigation={[{ key: 'overview', label: 'Overview', href: '/platform/access' }]}><PageContainer><h1>Platform data is unavailable</h1><p>Nothing has been changed. Refresh the page to try again.</p></PageContainer></AppShell>;
+  const [overview, businesses, pendingPayments, plans, audit] = await Promise.all(responses.map((response) => response.json()));
+  const data = { overview, businesses, pendingPayments, plans, audit } as PlatformData;
+  return <AppShell workspace="Platform administration" selectedKey="overview" navigation={[{ key: 'overview', label: 'Overview', href: '/platform/access' }]}><PageContainer><PlatformWorkspace initialData={data} /></PageContainer></AppShell>;
 }

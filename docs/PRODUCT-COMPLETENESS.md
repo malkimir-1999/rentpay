@@ -14,8 +14,8 @@ This checklist reconciles the Phase 0 product scope, Phase 1 security architectu
 ## Product surfaces and domains
 
 - [x] Marketing site and business registration/setup (Phase 2)
-- [ ] Super Admin tenant/platform operations and support grants
-- [ ] Business Today includes tenant-scoped live pickup, return, overdue, request, ready-for-pickup, vehicle-condition, unresolved-damage and maintenance-due/in-progress counts; payments, document and notification alerts remain
+- [ ] Super Admin operations: live platform overview, business/subscription visibility, audit feed, configurable plan creation and local subscription-payment review are implemented; audited tenant support grants, business/user lifecycle actions and role-based support workflow remain
+- [ ] Business Today includes tenant-scoped live pickup, return, overdue, request, ready-for-pickup, vehicle-condition, unresolved-damage and maintenance-due/in-progress counts; outstanding payments and unread user notification alerts are included. Document alerts remain.
 - [x] Fleet inventory: tenant-scoped vehicle list/detail/create/update/archive, rates, condition, audit, and cross-tenant API tests
 - [x] Location management: tenant-scoped list/read/create/update/archive, role guard, audit, cross-tenant CRUD tests, and safeguards for assigned vehicles
 - [x] Customer/driver foundation: separate renter/driver records, per-tenant scoping, composite tenant/customer FK, verification states, staff notes, archive/audit, permission-gated management UI, and cross-tenant API tests
@@ -25,16 +25,16 @@ This checklist reconciles the Phase 0 product scope, Phase 1 security architectu
 - [x] Staff reservation requests, approval/ready/cancel/decline/no-show transitions, vehicle assignment, scoped availability, audit, and transactional rental conversion are implemented; public requests, expiry automation, extras, and driver assignment remain
 - [ ] Rental lifecycle: reservation conversion, verified-renter and deposit-gated checkout, extension, inspection-gated return, tenant-scoped settlement, ledgered final payment/deposit application/refund, and close are implemented; rental agreement and customer signature remain
 - [x] Tenant-scoped immutable rental payment receipt/refund entries and separate deposit collection/refund/retention ledger support rental settlement; settlement requires returned state, resolved damage, balanced payment/deposit amounts, closes once, and is audited
-- [ ] Inspections now persist tenant-scoped handover/return/service-release checklists and secure file references; flagged areas create audited damage cases, and resolving a case requires an explanation. Maintenance work orders, due-date/mileage alerts, service windows, booking blocks, audited transitions and release-gated READY state are implemented; evidence previews/download authorization, billing linkage, and return comparison remain
+- [ ] Inspections now persist tenant-scoped handover/return/service-release checklists and secure file references; linked evidence can be opened only by authorized tenant staff. Flagged areas create audited damage cases, and resolving a case requires an explanation. Maintenance work orders, due-date/mileage alerts, service windows, booking blocks, audited transitions and release-gated READY state are implemented; evidence history, billing linkage, and return comparison remain
 - [ ] Invoices/agreements and secure downloadable assets
-- [ ] Team lifecycle and permission-aware operational navigation
+- [x] Team workspace: tenant-scoped member/pending-invitation list, role changes, suspend/reactivate, owner and administrator protections, transactionally audited mutations, invitation creation and role-aware navigation. Full custom-role editor, resend/revoke, and platform-wide user lifecycle remain.
 - [ ] Operational settings beyond locations
-- [ ] Notification center and delivery workflows
-- [ ] Global search and essential reports/utilization
+- [ ] Business and customer notification inboxes with read/unread state and separate membership-guarded tenant/customer APIs are implemented; extension-request and review events notify the business owner and requester. Email delivery is SMTP-configurable with a development mailbox; WhatsApp/SMS providers and broader event coverage remain.
+- [ ] Tenant- and permission-scoped Cmd/Ctrl+K search across vehicles, customers, reservations and rentals is implemented; global search refinements (record deep links and filters) and remaining essential reports remain. Fleet utilization has date filtering and permission-gated CSV export.
 - [x] Hosted business landing page foundation
 - [ ] Public vehicle catalogue and rate display, date-based live availability, rate-limited guest request-to-book with atomic tenant-scoped customer/reservation creation and audit are implemented; customer status tracking and request expiry automation remain
 - [ ] Structured website builder, starter themes, pages/sections/reorder/preview/publish
-- [ ] Customer portal for bookings, active rentals, documents, payments and extension requests
+- [ ] Customer portal now links only to tenant customer profiles matching the verified account email, shows scoped bookings/active/past rentals, payment/deposit ledger entries and notifications, and supports audited extension requests with atomic staff approval, availability checks, conflict rollback, concurrent-review protection and decision notes; downloadable documents and profile editing remain
 - [ ] SaaS plan management, manual local subscription payments and platform verification UI
 
 ## Critical release gates

@@ -12,6 +12,22 @@ export async function forwardBusinessApi(request: Request, path: string) {
   return forwardApiRequest(request, path, session.apiAccessToken);
 }
 
+export async function forwardPlatformApi(request: Request, path: string) {
+  const session = await auth();
+  if (!session?.apiAccessToken || session.user.accountType !== 'PLATFORM' || session.user.platformRole !== 'SUPER_ADMIN') {
+    return NextResponse.json({ error: { code: 'FORBIDDEN', message: 'Platform administrator access is required.' } }, { status: 403 });
+  }
+  return forwardApiRequest(request, path, session.apiAccessToken);
+}
+
+export async function forwardCustomerApi(request: Request, path: string) {
+  const session = await auth();
+  if (!session?.apiAccessToken || session.user.accountType !== 'CUSTOMER') {
+    return NextResponse.json({ error: { code: 'FORBIDDEN', message: 'Customer sign-in is required.' } }, { status: 403 });
+  }
+  return forwardApiRequest(request, path, session.apiAccessToken);
+}
+
 export function forwardPublicApi(request: Request, path: string) {
   return forwardApiRequest(request, path);
 }
@@ -34,6 +50,10 @@ async function forwardApiRequest(request: Request, path: string, accessToken?: s
     const outgoing = new Headers({ 'cache-control': 'no-store' });
     const responseType = response.headers.get('content-type');
     if (responseType) outgoing.set('content-type', responseType);
+    const disposition = response.headers.get('content-disposition');
+    if (disposition) outgoing.set('content-disposition', disposition);
+    const nosniff = response.headers.get('x-content-type-options');
+    if (nosniff) outgoing.set('x-content-type-options', nosniff);
     return new NextResponse(response.body, { status: response.status, headers: outgoing });
   } catch {
     return NextResponse.json({ error: { code: 'SERVICE_UNAVAILABLE', message: 'RentPay could not be reached. Please try again.' } }, { status: 503 });

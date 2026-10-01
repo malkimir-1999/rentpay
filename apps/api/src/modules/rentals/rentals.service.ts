@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, ForbiddenException, Injectable,
 import { Prisma, type RentalPaymentMethod, type RentalStatus } from '@prisma/client';
 import type { Actor } from '../identity/auth.types';
 import { PrismaService } from '../../infra/prisma.service';
+import { NotificationsService } from '../../infra/notifications.service';
 import { blockingMaintenance } from '../maintenance/maintenance-window';
 
 const detailSelect = {
@@ -23,7 +24,7 @@ const clean = (value?: string) => value?.trim() || undefined;
 
 @Injectable()
 export class RentalsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService, private readonly notifications: NotificationsService) {}
 
   list(actor: Actor, status?: RentalStatus) {
     const businessId = this.businessId(actor);
@@ -103,24 +104,48 @@ export class RentalsService {
     const businessId = this.businessId(actor);
     const newExpectedReturnAt = new Date(newExpectedReturnAtInput);
     if (!Number.isFinite(newExpectedReturnAt.getTime())) throw new BadRequestException('Choose a valid new return date and time.');
-    return this.prisma.$transaction(async (tx) => {
-      const locked = await tx.$queryRaw<Array<{ id: string; status: RentalStatus; businessId: string; vehicleId: string; reservationId: string; startAt: Date; expectedReturnAt: Date; dailyRateMinor: number }>>(Prisma.sql`SELECT r."id", r."status", r."businessId", r."vehicleId", r."reservationId", r."startAt", r."expectedReturnAt", r."dailyRateMinor" FROM "Rental" r JOIN "Vehicle" v ON v."id" = r."vehicleId" AND v."businessId" = r."businessId" WHERE r."id" = ${id} AND r."businessId" = ${businessId} FOR UPDATE OF r, v`);
-      const rental = locked[0];
-      if (!rental) throw new NotFoundException('Rental was not found.');
-      if (!['BOOKED', 'ACTIVE'].includes(rental.status)) throw new ConflictException('This rental can no longer be extended.');
-      if (newExpectedReturnAt <= rental.expectedReturnAt) throw new BadRequestException('The new return time must be later than the current return time.');
-      if (newExpectedReturnAt.getTime() - rental.startAt.getTime() > 366 * 86400000) throw new BadRequestException('A rental cannot be longer than 366 days.');
-      const reservationConflict = await tx.reservation.findFirst({ where: { businessId, vehicleId: rental.vehicleId, id: { not: rental.reservationId }, status: { in: ['PENDING', 'CONFIRMED', 'READY_FOR_PICKUP'] }, startAt: { lt: newExpectedReturnAt }, endAt: { gt: rental.expectedReturnAt } }, select: { id: true } });
-      const rentalConflict = await tx.rental.findFirst({ where: { businessId, vehicleId: rental.vehicleId, id: { not: id }, status: { in: [...activeStatuses] }, startAt: { lt: newExpectedReturnAt }, expectedReturnAt: { gt: rental.expectedReturnAt } }, select: { id: true } });
-      if (reservationConflict || rentalConflict) throw new ConflictException('Another booking or rental needs this vehicle before the new return time. Choose a different time or vehicle.');
-      if (await tx.maintenanceWorkOrder.findFirst({ where: { vehicleId: rental.vehicleId, ...blockingMaintenance(businessId, rental.expectedReturnAt, newExpectedReturnAt) }, select: { id: true } })) throw new ConflictException('Vehicle service is scheduled before the new return time. Choose a different time or vehicle.');
-      const billableDays = Math.max(1, Math.ceil((newExpectedReturnAt.getTime() - rental.startAt.getTime()) / 86400000));
-      const total = billableDays * rental.dailyRateMinor;
-      if (!Number.isSafeInteger(total) || total > 2_147_483_647) throw new BadRequestException('The rental total exceeds the supported amount. Review the rate or rental length.');
-      await tx.rental.update({ where: { id }, data: { expectedReturnAt: newExpectedReturnAt, estimatedTotalMinor: total } });
-      await tx.auditEvent.create({ data: { businessId, actorUserId: actor.userId, action: 'RENTAL_EXTENDED', entityType: 'Rental', entityId: id, metadata: { oldExpectedReturnAt: rental.expectedReturnAt.toISOString(), newExpectedReturnAt: newExpectedReturnAt.toISOString(), reason: reason.trim() } } });
-      return tx.rental.findFirstOrThrow({ where: { id, businessId }, select: detailSelect });
+    return this.prisma.$transaction((tx) => this.applyExtension(tx, actor, businessId, id, newExpectedReturnAt, reason));
+  }
+
+  async extensionRequests(actor: Actor) {
+    const businessId = this.businessId(actor);
+    return this.prisma.rentalExtensionRequest.findMany({ where: { businessId }, include: { rental: { select: { id: true, status: true, expectedReturnAt: true, currency: true, customerName: true, vehicle: { select: { make: true, model: true } } } }, customer: { select: { fullName: true, email: true, phone: true } } }, orderBy: { createdAt: 'desc' }, take: 100 });
+  }
+
+  async reviewExtensionRequest(actor: Actor, requestId: string, input: { approve: boolean; decisionNote?: string }) {
+    const businessId = this.businessId(actor);
+    const reviewed = await this.prisma.$transaction(async (tx) => {
+      const locked = await tx.$queryRaw<Array<{ id: string; rentalId: string; requestedReturnAt: Date; reason: string }>>(Prisma.sql`SELECT "id", "rentalId", "requestedReturnAt", "reason" FROM "RentalExtensionRequest" WHERE "id" = ${requestId} AND "businessId" = ${businessId} AND "status" = 'PENDING' FOR UPDATE`);
+      const request = locked[0];
+      if (!request) throw new NotFoundException('Pending extension request was not found.');
+      if (input.approve) await this.applyExtension(tx, actor, businessId, request.rentalId, request.requestedReturnAt, `Customer request: ${request.reason}`);
+      const status = input.approve ? 'APPROVED' : 'DECLINED';
+      const decisionNote = input.decisionNote?.trim() || null;
+      await tx.rentalExtensionRequest.update({ where: { id: request.id }, data: { status, reviewedByUserId: actor.userId, reviewedAt: new Date(), decisionNote } });
+      await tx.auditEvent.create({ data: { businessId, actorUserId: actor.userId, action: input.approve ? 'RENTAL_EXTENSION_REQUEST_APPROVED' : 'RENTAL_EXTENSION_REQUEST_DECLINED', entityType: 'RentalExtensionRequest', entityId: request.id, metadata: { rentalId: request.rentalId, requestedReturnAt: request.requestedReturnAt.toISOString(), decisionNote: input.decisionNote?.trim() || null } } });
+      return tx.rentalExtensionRequest.findFirstOrThrow({ where: { id: request.id, businessId }, include: { rental: { select: { id: true, expectedReturnAt: true, status: true } }, customer: { select: { fullName: true } } } });
     });
+    await this.notifications.dispatch({ event: 'RENTAL_EXTENSION_REVIEW', channel: 'IN_APP', recipient: reviewed.requestedByUserId, businessId, subject: `Return date request ${input.approve ? 'approved' : 'declined'}`, text: input.decisionNote?.trim() || (input.approve ? 'The rental team approved your requested return date.' : 'The rental team declined your requested return date.') });
+    return reviewed;
+  }
+
+  private async applyExtension(tx: Prisma.TransactionClient, actor: Actor, businessId: string, id: string, newExpectedReturnAt: Date, reason: string) {
+    const locked = await tx.$queryRaw<Array<{ id: string; status: RentalStatus; vehicleId: string; reservationId: string; startAt: Date; expectedReturnAt: Date; dailyRateMinor: number }>>(Prisma.sql`SELECT r."id", r."status", r."vehicleId", r."reservationId", r."startAt", r."expectedReturnAt", r."dailyRateMinor" FROM "Rental" r JOIN "Vehicle" v ON v."id" = r."vehicleId" AND v."businessId" = r."businessId" WHERE r."id" = ${id} AND r."businessId" = ${businessId} FOR UPDATE OF r, v`);
+    const rental = locked[0];
+    if (!rental) throw new NotFoundException('Rental was not found.');
+    if (!['BOOKED', 'ACTIVE'].includes(rental.status)) throw new ConflictException('This rental can no longer be extended.');
+    if (newExpectedReturnAt <= rental.expectedReturnAt) throw new BadRequestException('The new return time must be later than the current return time.');
+    if (newExpectedReturnAt.getTime() - rental.startAt.getTime() > 366 * 86400000) throw new BadRequestException('A rental cannot be longer than 366 days.');
+    const reservationConflict = await tx.reservation.findFirst({ where: { businessId, vehicleId: rental.vehicleId, id: { not: rental.reservationId }, status: { in: ['PENDING', 'CONFIRMED', 'READY_FOR_PICKUP'] }, startAt: { lt: newExpectedReturnAt }, endAt: { gt: rental.expectedReturnAt } }, select: { id: true } });
+    const rentalConflict = await tx.rental.findFirst({ where: { businessId, vehicleId: rental.vehicleId, id: { not: id }, status: { in: [...activeStatuses] }, startAt: { lt: newExpectedReturnAt }, expectedReturnAt: { gt: rental.expectedReturnAt } }, select: { id: true } });
+    if (reservationConflict || rentalConflict) throw new ConflictException('Another booking or rental needs this vehicle before the new return time. Choose a different time or vehicle.');
+    if (await tx.maintenanceWorkOrder.findFirst({ where: { businessId, vehicleId: rental.vehicleId, ...blockingMaintenance(businessId, rental.expectedReturnAt, newExpectedReturnAt) }, select: { id: true } })) throw new ConflictException('Vehicle service is scheduled before the new return time. Choose a different time or vehicle.');
+    const billableDays = Math.max(1, Math.ceil((newExpectedReturnAt.getTime() - rental.startAt.getTime()) / 86400000));
+    const total = billableDays * rental.dailyRateMinor;
+    if (!Number.isSafeInteger(total) || total > 2_147_483_647) throw new BadRequestException('The rental total exceeds the supported amount. Review the rate or rental length.');
+    await tx.rental.update({ where: { id }, data: { expectedReturnAt: newExpectedReturnAt, estimatedTotalMinor: total } });
+    await tx.auditEvent.create({ data: { businessId, actorUserId: actor.userId, action: 'RENTAL_EXTENDED', entityType: 'Rental', entityId: id, metadata: { oldExpectedReturnAt: rental.expectedReturnAt.toISOString(), newExpectedReturnAt: newExpectedReturnAt.toISOString(), reason: reason.trim() } } });
+    return tx.rental.findFirstOrThrow({ where: { id, businessId }, select: detailSelect });
   }
 
   async settle(actor: Actor, id: string, input: { additionalChargesMinor: number; paymentReceivedMinor: number; method: RentalPaymentMethod; reference?: string; note?: string }) {

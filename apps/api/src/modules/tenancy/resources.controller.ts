@@ -1,6 +1,7 @@
-import { Body, Controller, Delete, Get, NotFoundException, ForbiddenException, Inject, Param, Patch, Post, UseGuards, UseInterceptors, UploadedFile, BadRequestException } from '@nestjs/common';
+import { Body, Controller, Delete, Get, NotFoundException, ForbiddenException, Inject, Param, Patch, Post, UseGuards, UseInterceptors, UploadedFile, BadRequestException, ConflictException, StreamableFile, Header } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { IsBoolean, IsEmail, IsIn, IsInt, IsOptional, IsString, Matches, Min, MinLength } from 'class-validator';
+import { Prisma } from '@prisma/client';
+import { IsBoolean, IsEmail, IsIn, IsInt, IsISO8601, IsOptional, IsString, Matches, MaxLength, Min, MinLength } from 'class-validator';
 import { AuthGuard } from '../identity/auth.guard';
 import { RequirePermission, PermissionGuard, TenantAccessGuard, PlatformGuard, CustomerGuard } from '../identity/access';
 import { CurrentActor } from '../identity/access';
@@ -9,13 +10,78 @@ import { PrismaService } from '../../infra/prisma.service';
 import { UploadService } from '../../infra/storage';
 import { AuthService } from '../identity/auth.service';
 import { AuditService } from '../../infra/audit.service';
+import { NotificationsService } from '../../infra/notifications.service';
 import { SUBSCRIPTION_PAYMENT_PROVIDER, type PakistanPaymentMethod, type SubscriptionPaymentProvider } from '../subscriptions/manual-payment.provider';
 @Controller('platform')
 @UseGuards(AuthGuard, PlatformGuard)
-export class PlatformController { @Get('health') health() { return { ok: true, scope: 'platform' }; } }
+export class PlatformController {
+ constructor(private readonly prisma: PrismaService) {}
+ @Get('health') health() { return { ok: true, scope: 'platform' }; }
+ @Get('overview') async overview() {
+  const [businesses, users, activeSubscriptions, trials, pendingPayments, overdueTrials] = await Promise.all([
+   this.prisma.business.count(),
+   this.prisma.user.count(),
+   this.prisma.subscription.count({ where: { status: 'ACTIVE' } }),
+   this.prisma.subscription.count({ where: { status: 'TRIALING' } }),
+   this.prisma.subscriptionPayment.count({ where: { status: 'PENDING_VERIFICATION' } }),
+   this.prisma.subscription.count({ where: { status: 'TRIALING', trialEndsAt: { lt: new Date() } } }),
+  ]);
+  return { businesses, users, activeSubscriptions, trials, pendingPayments, overdueTrials };
+ }
+ @Get('businesses') businesses() {
+  return this.prisma.business.findMany({ select: { id: true, name: true, slug: true, country: true, createdAt: true, _count: { select: { memberships: true, vehicles: true, customers: true } }, subscriptions: { take: 1, orderBy: { trialStartedAt: 'desc' }, select: { status: true, trialEndsAt: true, activatedAt: true, plan: { select: { name: true, amountMinor: true, currency: true } } } } }, orderBy: { createdAt: 'desc' } });
+ }
+ @Get('audit') audit() { return this.prisma.auditEvent.findMany({ take: 100, orderBy: { createdAt: 'desc' }, select: { id: true, businessId: true, actorUserId: true, action: true, entityType: true, entityId: true, metadata: true, createdAt: true } }); }
+}
+class CustomerExtensionRequestDto { @IsISO8601() requestedReturnAt!: string; @IsString() @MinLength(8) @MaxLength(500) reason!: string; }
 @Controller('customer')
 @UseGuards(AuthGuard, CustomerGuard)
-export class CustomerController { @Get('me') me(@CurrentActor() actor: Actor) { return { userId: actor.userId, accountType: actor.accountType }; } }
+export class CustomerController {
+ constructor(private readonly prisma: PrismaService, private readonly notifications: NotificationsService) {}
+ @Get('me') me(@CurrentActor() actor: Actor) { return this.prisma.user.findUnique({ where: { id: actor.userId }, select: { id: true, name: true, email: true, accountType: true } }); }
+ @Get('bookings') bookings(@CurrentActor() actor: Actor) {
+  return this.prisma.reservation.findMany({ where: { customer: { userId: actor.userId } }, select: { id: true, status: true, source: true, startAt: true, endAt: true, estimatedTotalMinor: true, currency: true, createdAt: true, business: { select: { name: true, slug: true, phone: true, email: true, settings: { select: { timezone: true } } } }, vehicle: { select: { make: true, model: true, category: true } }, pickupLocation: { select: { name: true, address: true } }, dropoffLocation: { select: { name: true } } }, orderBy: { startAt: 'desc' }, take: 100 });
+ }
+ @Get('rentals') rentals(@CurrentActor() actor: Actor) {
+  return this.prisma.rental.findMany({ where: { customer: { userId: actor.userId } }, select: { id: true, status: true, startAt: true, expectedReturnAt: true, actualReturnAt: true, estimatedTotalMinor: true, currency: true, business: { select: { name: true, slug: true, phone: true, email: true, settings: { select: { timezone: true } } } }, vehicle: { select: { make: true, model: true, category: true } }, pickupLocation: { select: { name: true } }, dropoffLocation: { select: { name: true } } }, orderBy: { startAt: 'desc' }, take: 100 });
+ }
+ @Get('payments') async payments(@CurrentActor() actor: Actor) {
+  const customerScope = { reservation: { customer: { userId: actor.userId } } };
+  const [paymentEntries, depositEntries] = await Promise.all([
+   this.prisma.rentalPaymentEntry.findMany({ where: customerScope, select: { id: true, type: true, amountMinor: true, currency: true, method: true, createdAt: true, reservation: { select: { vehicle: { select: { make: true, model: true } }, business: { select: { name: true } } } } }, orderBy: { createdAt: 'desc' }, take: 100 }),
+   this.prisma.depositLedgerEntry.findMany({ where: customerScope, select: { id: true, type: true, amountMinor: true, currency: true, createdAt: true, reservation: { select: { vehicle: { select: { make: true, model: true } }, business: { select: { name: true } } } } }, orderBy: { createdAt: 'desc' }, take: 100 }),
+  ]);
+  return [
+   ...paymentEntries.map(({ reservation, ...entry }) => ({ ...entry, kind: 'PAYMENT' as const, method: entry.method.replaceAll('_', ' '), vehicle: reservation.vehicle, business: reservation.business })),
+   ...depositEntries.map(({ reservation, ...entry }) => ({ ...entry, kind: 'DEPOSIT' as const, method: null, vehicle: reservation.vehicle, business: reservation.business })),
+  ].sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime()).slice(0, 100);
+ }
+ @Post('rentals/:rentalId/extension-requests') async requestExtension(@CurrentActor() actor: Actor, @Param('rentalId') rentalId: string, @Body() body: CustomerExtensionRequestDto) {
+  const requestedReturnAt = new Date(body.requestedReturnAt);
+  if (!Number.isFinite(requestedReturnAt.getTime())) throw new BadRequestException('Choose a valid return date and time.');
+  const created = await this.prisma.$transaction(async (tx) => {
+   const locked = await tx.$queryRaw<Array<{ id: string; businessId: string; customerId: string; status: string; expectedReturnAt: Date }>>(Prisma.sql`SELECT "id", "businessId", "customerId", "status", "expectedReturnAt" FROM "Rental" WHERE "id" = ${rentalId} FOR UPDATE`);
+   const rental = locked[0];
+   if (!rental) throw new NotFoundException('Rental was not found.');
+   const customer = await tx.customer.findFirst({ where: { id: rental.customerId, businessId: rental.businessId, userId: actor.userId, status: 'ACTIVE', archivedAt: null }, select: { id: true, fullName: true } });
+   if (!customer) throw new NotFoundException('Rental was not found.');
+   if (!['BOOKED', 'ACTIVE'].includes(rental.status)) throw new BadRequestException('An extension can only be requested for a booked or active rental.');
+   if (requestedReturnAt <= rental.expectedReturnAt || requestedReturnAt.getTime() - rental.expectedReturnAt.getTime() > 90 * 86400000) throw new BadRequestException('Choose a return time after the current return time and within 90 days.');
+   const pending = await tx.rentalExtensionRequest.findFirst({ where: { businessId: rental.businessId, rentalId, status: 'PENDING' }, select: { id: true } });
+   if (pending) throw new ConflictException('You already have an extension request waiting for the rental team.');
+   const request = await tx.rentalExtensionRequest.create({ data: { businessId: rental.businessId, rentalId, customerId: customer.id, requestedByUserId: actor.userId, requestedReturnAt, reason: body.reason.trim() } });
+   await tx.auditEvent.create({ data: { businessId: rental.businessId, actorUserId: actor.userId, action: 'RENTAL_EXTENSION_REQUESTED', entityType: 'RentalExtensionRequest', entityId: request.id, metadata: { rentalId, requestedReturnAt: requestedReturnAt.toISOString() } } });
+   return { id: request.id, businessId: rental.businessId, customerName: customer.fullName, requestedReturnAt: request.requestedReturnAt, status: request.status, reason: request.reason, createdAt: request.createdAt };
+  });
+  const owners = await this.prisma.businessMembership.findMany({ where: { businessId: created.businessId, status: 'ACTIVE', role: { key: 'OWNER' } }, select: { userId: true } });
+  await Promise.allSettled(owners.map((owner) => this.notifications.dispatch({ event: 'RENTAL_EXTENSION_REQUEST', channel: 'IN_APP', recipient: owner.userId, businessId: created.businessId, subject: 'A renter requested more time', text: `${created.customerName} asked to return the vehicle later. Review the request in Rentals.` })));
+  const { businessId: _businessId, customerName: _customerName, ...request } = created;
+  return request;
+ }
+ @Get('extension-requests') extensionRequests(@CurrentActor() actor: Actor) {
+  return this.prisma.rentalExtensionRequest.findMany({ where: { requestedByUserId: actor.userId }, select: { id: true, requestedReturnAt: true, reason: true, status: true, decisionNote: true, reviewedAt: true, createdAt: true, rental: { select: { id: true, status: true, expectedReturnAt: true, vehicle: { select: { make: true, model: true } }, business: { select: { name: true, phone: true, email: true, settings: { select: { timezone: true } } } } } } }, orderBy: { createdAt: 'desc' }, take: 50 });
+ }
+}
 @Controller('business/files')
 @UseGuards(AuthGuard, TenantAccessGuard, PermissionGuard)
 export class TenantFilesController {
@@ -24,6 +90,12 @@ export class TenantFilesController {
  upload(@CurrentActor() actor: Actor, @UploadedFile() file?: { buffer: Buffer; mimetype: string }) {
   if (!file) throw new BadRequestException('Choose a file to upload');
   return this.uploads.upload({ businessId: actor.businessId, actorBusinessId: actor.businessId, buffer: file.buffer, claimedMime: file.mimetype });
+ }
+ @Get(':id/download') @RequirePermission('inspection.manage') @Header('Cache-Control', 'private, no-store') @Header('X-Content-Type-Options', 'nosniff')
+ async download(@CurrentActor() actor: Actor, @Param('id') id: string) {
+  const asset = await this.uploads.downloadEvidence(id, actor.businessId!);
+  const filename = asset.key.split('/').pop() ?? 'evidence';
+  return new StreamableFile(asset.bytes, { type: asset.mimeType, disposition: `inline; filename="${filename}"` });
  }
  @Delete(':id') @RequirePermission('vehicle.manage') delete(@CurrentActor() actor: Actor, @Param('id') id: string) { return this.uploads.delete(id, actor.businessId!); }
 }

@@ -1,0 +1,10 @@
+.filters { display: flex; flex-wrap: wrap; align-items: end; gap: var(--rp-space-4); }
+.filters label { display: grid; gap: var(--rp-space-2); min-width: min(100%, 220px); color: var(--rp-color-text-secondary); }
+.error { margin-top: var(--rp-space-4); }
+.metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--rp-space-4); }
+.metrics :global(.ant-card-body) { display: grid; gap: var(--rp-space-3); }
+.metrics span, .vehicle span, .note { color: var(--rp-color-text-secondary); }
+.metrics strong { font-size: var(--rp-font-size-h2); color: var(--rp-color-text-primary); }
+.vehicle { display: grid; gap: var(--rp-space-1); }
+.note { margin: 0; }
+@media (max-width: 680px) { .metrics { grid-template-columns: 1fr; } .filters label { width: 100%; } }

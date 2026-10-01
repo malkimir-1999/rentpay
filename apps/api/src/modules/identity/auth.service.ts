@@ -129,8 +129,22 @@ export class AuthService {
   }
 
   async verifyEmail(raw: string) {
-    const userId = await this.consumeToken(raw, 'EMAIL_VERIFICATION');
-    await this.prisma.user.update({ where: { id: userId }, data: { emailVerifiedAt: new Date() } });
+    await this.prisma.$transaction(async (tx) => {
+      const token = await tx.authToken.findUnique({ where: { tokenHash: tokenHash(raw) } });
+      if (!token || token.purpose !== 'EMAIL_VERIFICATION' || token.consumedAt || token.expiresAt <= new Date()) throw new UnauthorizedException('This link is invalid or has expired');
+      const consumed = await tx.authToken.updateMany({ where: { id: token.id, consumedAt: null }, data: { consumedAt: new Date() } });
+      if (consumed.count !== 1) throw new UnauthorizedException('This link has already been used');
+      const userId = token.userId;
+      const user = await tx.user.update({ where: { id: userId }, data: { emailVerifiedAt: new Date() }, select: { id: true, email: true, accountType: true } });
+      if (user.accountType !== 'CUSTOMER') return;
+      const profiles = await tx.customer.findMany({ where: { email: user.email, userId: null }, select: { id: true, businessId: true } });
+      for (const profile of profiles) {
+        const alreadyLinked = await tx.customer.findFirst({ where: { businessId: profile.businessId, userId: user.id }, select: { id: true } });
+        if (alreadyLinked) continue;
+        await tx.customer.update({ where: { id: profile.id }, data: { userId: user.id } });
+        await tx.auditEvent.create({ data: { businessId: profile.businessId, actorUserId: user.id, action: 'CUSTOMER_ACCOUNT_LINKED', entityType: 'Customer', entityId: profile.id } });
+      }
+    });
   }
 
   async acceptInvitation(raw: string, password: string, name?: string) {

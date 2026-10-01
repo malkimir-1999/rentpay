@@ -74,6 +74,8 @@
   --rp-size-icon-sm: 28px;
   --rp-size-brand: 32px;
   --rp-focus-outline: 3px;
+  --rp-focus-ring: var(--rp-focus-outline) solid var(--rp-color-primary-soft);
+  --rp-opacity-disabled: 0.65;
   --rp-breakpoint-tablet: 768px;
   --rp-breakpoint-navigation: 992px;
   --rp-z-drawer: 1000;

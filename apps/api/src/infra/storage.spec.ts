@@ -6,7 +6,7 @@ import type { PrismaService } from './prisma.service';
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/Y2cAAAAASUVORK5CYII=', 'base64');
 
 function createService() {
-  const provider = { put: vi.fn(), remove: vi.fn() };
+  const provider = { put: vi.fn(), get: vi.fn(async () => png), remove: vi.fn() };
   const prisma = {
     fileAsset: {
       create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({ id: 'asset-1', ...data })),
@@ -37,6 +37,15 @@ describe('tenant file storage', () => {
     const { service, provider } = createService();
     await expect(service.delete('guessed-asset-id', 'biz-a')).rejects.toBeInstanceOf(ForbiddenException);
     expect(provider.remove).not.toHaveBeenCalled();
+  });
+
+  it('allows evidence download only when the asset is attached within the active tenant', async () => {
+    const { service, provider, prisma } = createService();
+    vi.mocked(prisma.fileAsset.findFirst).mockResolvedValueOnce({ key: 'biz-a/evidence.png', mimeType: 'image/png' } as never);
+    await expect(service.downloadEvidence('asset-a', 'biz-a')).resolves.toMatchObject({ mimeType: 'image/png', bytes: png });
+    expect(prisma.fileAsset.findFirst).toHaveBeenCalledWith({ where: { id: 'asset-a', businessId: 'biz-a', inspectionEvidence: { some: { businessId: 'biz-a' } } }, select: { key: true, mimeType: true } });
+    expect(provider.get).toHaveBeenCalledWith('biz-a/evidence.png');
+    await expect(service.downloadEvidence('asset-b', 'biz-a')).rejects.toBeInstanceOf(ForbiddenException);
   });
 
   it('rejects storage keys that escape the configured root on every OS', async () => {

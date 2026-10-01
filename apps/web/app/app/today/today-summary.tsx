@@ -1,9 +1,11 @@
 import Link from 'next/link';
 import type { Route } from 'next';
 import styles from '../../../components/ui.module.css';
+import { MoneyDisplay } from '../../../components/ui';
 
 export type TodayData = {
   timezone: string;
+  currency: string;
   pickups: number;
   returns: number;
   overdue: number;
@@ -14,6 +16,9 @@ export type TodayData = {
   unresolvedDamage: number | null;
   maintenanceDue: number | null;
   maintenanceInProgress: number | null;
+  pendingPaymentCount: number | null;
+  pendingPaymentMinor: number | null;
+  unreadNotifications: number;
 };
 
 export function TodaySummary({ data, permissions }: { data: TodayData; permissions: readonly string[] }) {
@@ -24,6 +29,8 @@ export function TodaySummary({ data, permissions }: { data: TodayData; permissio
     { label: 'Booking requests', value: data.bookingRequests, detail: 'Requests waiting for a decision.', href: '/app/reservations', permission: 'reservation.view' },
     { label: 'Ready for pickup', value: data.readyForPickup, detail: 'Reservations ready to turn into rentals.', href: '/app/reservations', permission: 'reservation.view' },
     { label: 'Vehicles ready', value: data.availableVehicles, detail: `${data.preparingVehicles} vehicle${data.preparingVehicles === 1 ? '' : 's'} in preparation. Ready vehicles may still have bookings.`, href: '/app/fleet', permission: 'vehicle.view' },
+    ...(data.pendingPaymentCount === null || data.pendingPaymentMinor === null ? [] : [{ label: 'Pending payments', value: data.pendingPaymentCount, detail: <><MoneyDisplay amountMinor={data.pendingPaymentMinor} currency={data.currency} /> is outstanding on confirmed reservations and active rentals.</>, href: '/app/reservations', permission: 'payment.view' }]),
+    ...(data.unreadNotifications > 0 ? [{ label: 'New updates', value: data.unreadNotifications, detail: 'Important messages from your rental workspace.', href: '/app/notifications', permission: 'dashboard.view' }] : []),
     ...(data.unresolvedDamage === null ? [] : [{ label: 'Damage cases', value: data.unresolvedDamage, detail: 'Open issues that need repair review or a final decision.', href: '/app/inspections', permission: 'inspection.manage' }]),
     ...(data.maintenanceDue === null ? [] : [{ label: 'Service due', value: data.maintenanceDue, detail: 'Planned vehicle work due by date or mileage.', href: '/app/maintenance', permission: 'maintenance.view' }]),
     ...(data.maintenanceInProgress === null ? [] : [{ label: 'In service', value: data.maintenanceInProgress, detail: 'Vehicle work orders currently in progress.', href: '/app/maintenance', permission: 'maintenance.view' }]),

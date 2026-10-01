@@ -90,6 +90,13 @@ enum RentalStatus {
   CANCELLED
 }
 
+enum RentalExtensionRequestStatus {
+  PENDING
+  APPROVED
+  DECLINED
+  CANCELLED
+}
+
 enum RentalPaymentMethod {
   CASH
   BANK_TRANSFER
@@ -131,77 +138,83 @@ enum MaintenanceStatus {
 }
 
 model User {
-  id                  String                 @id @default(cuid())
-  email               String                 @unique
-  name                String?
-  phone               String?
-  termsAcceptedAt     DateTime?
-  termsVersion        String?
-  passwordHash        String?
-  emailVerifiedAt     DateTime?
-  accountType         AccountType            @default(BUSINESS)
-  platformRole        PlatformRole?
-  createdAt           DateTime               @default(now())
-  updatedAt           DateTime               @updatedAt
-  memberships         BusinessMembership[]
-  auditEvents         AuditEvent[]
-  authTokens          AuthToken[]
-  invitationsCreated  Invitation[]           @relation("InvitationCreator")
-  apiSessions         ApiSession[]
-  customerProfiles    Customer[]
-  inspectionsCreated  VehicleInspection[]    @relation("InspectionCreator")
-  damageCasesReported DamageCase[]           @relation("DamageReporter")
-  maintenanceCreated  MaintenanceWorkOrder[] @relation("MaintenanceCreator")
+  id                        String                   @id @default(cuid())
+  email                     String                   @unique
+  name                      String?
+  phone                     String?
+  termsAcceptedAt           DateTime?
+  termsVersion              String?
+  passwordHash              String?
+  emailVerifiedAt           DateTime?
+  accountType               AccountType              @default(BUSINESS)
+  platformRole              PlatformRole?
+  createdAt                 DateTime                 @default(now())
+  updatedAt                 DateTime                 @updatedAt
+  memberships               BusinessMembership[]
+  auditEvents               AuditEvent[]
+  authTokens                AuthToken[]
+  invitationsCreated        Invitation[]             @relation("InvitationCreator")
+  apiSessions               ApiSession[]
+  customerProfiles          Customer[]
+  inspectionsCreated        VehicleInspection[]      @relation("InspectionCreator")
+  damageCasesReported       DamageCase[]             @relation("DamageReporter")
+  maintenanceCreated        MaintenanceWorkOrder[]   @relation("MaintenanceCreator")
+  requestedRentalExtensions RentalExtensionRequest[] @relation("RentalExtensionRequester")
+  reviewedRentalExtensions  RentalExtensionRequest[] @relation("RentalExtensionReviewer")
+  notificationInbox         Notification[]           @relation("NotificationRecipient")
 }
 
 model Business {
-  id                String                 @id @default(cuid())
-  name              String
-  slug              String                 @unique
-  phone             String?
-  email             String?
-  address           String?
-  country           String                 @default("PK")
-  createdAt         DateTime               @default(now())
-  updatedAt         DateTime               @updatedAt
-  memberships       BusinessMembership[]
-  settings          BusinessSettings?
-  locations         Location[]
-  vehicles          Vehicle[]
-  invitations       Invitation[]
-  subscriptions     Subscription[]
-  auditEvents       AuditEvent[]
-  customers         Customer[]
-  drivers           Driver[]
-  reservations      Reservation[]
-  rentals           Rental[]
-  rentalPayments    RentalPaymentEntry[]
-  depositEntries    DepositLedgerEntry[]
-  inspections       VehicleInspection[]
-  damageCases       DamageCase[]
-  rentalSettlements RentalSettlement[]
-  maintenanceOrders MaintenanceWorkOrder[]
+  id                      String                   @id @default(cuid())
+  name                    String
+  slug                    String                   @unique
+  phone                   String?
+  email                   String?
+  address                 String?
+  country                 String                   @default("PK")
+  createdAt               DateTime                 @default(now())
+  updatedAt               DateTime                 @updatedAt
+  memberships             BusinessMembership[]
+  settings                BusinessSettings?
+  locations               Location[]
+  vehicles                Vehicle[]
+  invitations             Invitation[]
+  subscriptions           Subscription[]
+  auditEvents             AuditEvent[]
+  notifications           Notification[]
+  customers               Customer[]
+  drivers                 Driver[]
+  reservations            Reservation[]
+  rentals                 Rental[]
+  rentalPayments          RentalPaymentEntry[]
+  depositEntries          DepositLedgerEntry[]
+  inspections             VehicleInspection[]
+  damageCases             DamageCase[]
+  rentalSettlements       RentalSettlement[]
+  maintenanceOrders       MaintenanceWorkOrder[]
+  rentalExtensionRequests RentalExtensionRequest[]
 }
 
 model Customer {
-  id           String             @id @default(cuid())
-  businessId   String
-  userId       String?
-  fullName     String
-  email        String?
-  phone        String
-  address      String?
-  notes        String?
-  status       CustomerStatus     @default(ACTIVE)
-  verification VerificationStatus @default(NOT_REVIEWED)
-  archivedAt   DateTime?
-  createdAt    DateTime           @default(now())
-  updatedAt    DateTime           @updatedAt
-  business     Business           @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  user         User?              @relation(fields: [userId], references: [id], onDelete: SetNull)
-  drivers      Driver[]
-  reservations Reservation[]
-  rentals      Rental[]
+  id                      String                   @id @default(cuid())
+  businessId              String
+  userId                  String?
+  fullName                String
+  email                   String?
+  phone                   String
+  address                 String?
+  notes                   String?
+  status                  CustomerStatus           @default(ACTIVE)
+  verification            VerificationStatus       @default(NOT_REVIEWED)
+  archivedAt              DateTime?
+  createdAt               DateTime                 @default(now())
+  updatedAt               DateTime                 @updatedAt
+  business                Business                 @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  user                    User?                    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  drivers                 Driver[]
+  reservations            Reservation[]
+  rentals                 Rental[]
+  rentalExtensionRequests RentalExtensionRequest[]
 
   @@unique([id, businessId])
   @@unique([businessId, userId])
@@ -412,7 +425,7 @@ model RentalPaymentEntry {
 }
 
 model Rental {
-  id                     String              @id @default(cuid())
+  id                     String                   @id @default(cuid())
   businessId             String
   reservationId          String
   customerId             String
@@ -420,7 +433,7 @@ model Rental {
   pickupLocationId       String
   dropoffLocationId      String?
   actualReturnLocationId String?
-  status                 RentalStatus        @default(BOOKED)
+  status                 RentalStatus             @default(BOOKED)
   startAt                DateTime
   expectedReturnAt       DateTime
   actualReturnAt         DateTime?
@@ -440,24 +453,51 @@ model Rental {
   notes                  String?
   checkoutNotes          String?
   returnNotes            String?
-  createdAt              DateTime            @default(now())
-  updatedAt              DateTime            @updatedAt
-  business               Business            @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  reservation            Reservation         @relation(fields: [businessId, reservationId], references: [businessId, id], onDelete: Restrict)
-  customer               Customer            @relation(fields: [customerId, businessId], references: [id, businessId], onDelete: Restrict)
-  vehicle                Vehicle             @relation(fields: [vehicleId, businessId], references: [id, businessId], onDelete: Restrict)
-  pickupLocation         Location            @relation("RentalPickup", fields: [pickupLocationId, businessId], references: [id, businessId], onDelete: Restrict)
-  dropoffLocation        Location?           @relation("RentalDropoff", fields: [dropoffLocationId, businessId], references: [id, businessId], onDelete: Restrict)
-  actualReturnLocation   Location?           @relation("RentalActualReturn", fields: [actualReturnLocationId, businessId], references: [id, businessId], onDelete: Restrict)
+  createdAt              DateTime                 @default(now())
+  updatedAt              DateTime                 @updatedAt
+  business               Business                 @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  reservation            Reservation              @relation(fields: [businessId, reservationId], references: [businessId, id], onDelete: Restrict)
+  customer               Customer                 @relation(fields: [customerId, businessId], references: [id, businessId], onDelete: Restrict)
+  vehicle                Vehicle                  @relation(fields: [vehicleId, businessId], references: [id, businessId], onDelete: Restrict)
+  pickupLocation         Location                 @relation("RentalPickup", fields: [pickupLocationId, businessId], references: [id, businessId], onDelete: Restrict)
+  dropoffLocation        Location?                @relation("RentalDropoff", fields: [dropoffLocationId, businessId], references: [id, businessId], onDelete: Restrict)
+  actualReturnLocation   Location?                @relation("RentalActualReturn", fields: [actualReturnLocationId, businessId], references: [id, businessId], onDelete: Restrict)
   inspections            VehicleInspection[]
   damageCases            DamageCase[]
   settlement             RentalSettlement?
+  extensionRequests      RentalExtensionRequest[]
 
   @@unique([businessId, id])
   @@unique([businessId, reservationId])
   @@index([businessId, status, expectedReturnAt])
   @@index([businessId, vehicleId, status, startAt, expectedReturnAt])
   @@index([businessId, customerId, createdAt])
+}
+
+model RentalExtensionRequest {
+  id                String                       @id @default(cuid())
+  businessId        String
+  rentalId          String
+  customerId        String
+  requestedByUserId String
+  requestedReturnAt DateTime
+  reason            String
+  status            RentalExtensionRequestStatus @default(PENDING)
+  reviewedByUserId  String?
+  reviewedAt        DateTime?
+  decisionNote      String?
+  createdAt         DateTime                     @default(now())
+  updatedAt         DateTime                     @updatedAt
+  business          Business                     @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  rental            Rental                       @relation(fields: [businessId, rentalId], references: [businessId, id], onDelete: Cascade)
+  customer          Customer                     @relation(fields: [customerId, businessId], references: [id, businessId], onDelete: Cascade)
+  requestedBy       User                         @relation("RentalExtensionRequester", fields: [requestedByUserId], references: [id], onDelete: Restrict)
+  reviewedBy        User?                        @relation("RentalExtensionReviewer", fields: [reviewedByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([id, businessId])
+  @@index([businessId, status, createdAt])
+  @@index([businessId, rentalId, status])
+  @@index([customerId, status, createdAt])
 }
 
 model RentalSettlement {
@@ -718,10 +758,19 @@ model MaintenanceWorkOrder {
 }
 
 model Notification {
-  id         String   @id @default(cuid())
-  businessId String?
-  event      String
-  channel    String
-  status     String
-  createdAt  DateTime @default(now())
+  id              String    @id @default(cuid())
+  businessId      String?
+  recipientUserId String?
+  event           String
+  channel         String
+  status          String
+  title           String?
+  message         String?
+  readAt          DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  business        Business? @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  recipientUser   User?     @relation("NotificationRecipient", fields: [recipientUserId], references: [id], onDelete: SetNull)
+
+  @@index([businessId, recipientUserId, readAt, createdAt])
 }

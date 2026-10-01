@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Alert, Button, Card, Form, Input, InputNumber, Modal, Select, Table, Tag, Upload, message } from 'antd';
+import { Alert, Button, Card, Form, Input, InputNumber, Modal, Select, Space, Table, Tag, Upload, message } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import type { RcFile } from 'antd/es/upload';
 import { MoneyDisplay } from '../../../components/ui';
@@ -81,7 +81,7 @@ export function InspectionsWorkspace({ vehicles, initialInspections, initialDama
     { title: 'Stage', dataIndex: 'stage', render: (stage: Inspection['stage']) => stage === 'PRE_HANDOVER' ? 'Before handover' : stage === 'RETURN' ? 'Vehicle return' : 'After service' },
     { title: 'Mileage', dataIndex: 'odometerKm', render: (value: number) => `${value.toLocaleString()} km` },
     { title: 'Result', key: 'result', render: (_, row) => Object.values(row.checklist).includes('ISSUE') ? <Tag color="red">Issues found</Tag> : <Tag color="green">No issues found</Tag> },
-    { title: 'Evidence', key: 'evidence', render: (_, row) => `${row.evidence.length} file${row.evidence.length === 1 ? '' : 's'}` },
+    { title: 'Evidence', key: 'evidence', render: (_, row) => row.evidence.length ? <Space wrap>{row.evidence.map((evidence) => evidence.fileAsset ? <a key={evidence.id} href={`/api/app/files/${encodeURIComponent(evidence.fileAsset.id)}/download`} target="_blank" rel="noreferrer">Open {evidence.fileAsset.mimeType === 'application/pdf' ? 'PDF' : 'photo'}</a> : null)}</Space> : 'No files' },
     { title: 'Notes', dataIndex: 'notes', render: (value: string | null) => value || '—' },
   ];
   const damageColumns: ColumnsType<DamageCase> = [

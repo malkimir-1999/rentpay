@@ -12,6 +12,7 @@ debug.log
 prisma/*.db
 .runtime
 apps/api/uploads
+/uploads
 apps/api/seed-dist
 *.tsbuildinfo
 packages/config/src/*.js

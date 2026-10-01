@@ -1,1 +1,1 @@
-ALTER TABLE "Reservation" ADD COLUMN "statusReason" TEXT;
+ALTER TABLE "Reservation" ADD COLUMN IF NOT EXISTS "statusReason" TEXT;

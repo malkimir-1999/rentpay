@@ -1,6 +1,6 @@
 import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { RentalPaymentMethod, RentalStatus } from '@prisma/client';
-import { IsEnum, IsInt, IsISO8601, IsOptional, IsString, Max, MaxLength, Min, MinLength } from 'class-validator';
+import { IsBoolean, IsEnum, IsInt, IsISO8601, IsOptional, IsString, Max, MaxLength, Min, MinLength } from 'class-validator';
 import { AuthGuard } from '../identity/auth.guard';
 import { CurrentActor, PermissionGuard, RequirePermission, TenantAccessGuard } from '../identity/access';
 import type { Actor } from '../identity/auth.types';
@@ -26,6 +26,7 @@ class SettlementDto {
   @IsOptional() @IsString() @MaxLength(160) reference?: string;
   @IsOptional() @IsString() @MaxLength(1000) note?: string;
 }
+class ReviewExtensionRequestDto { @IsBoolean() approve!: boolean; @IsOptional() @IsString() @MaxLength(1000) decisionNote?: string; }
 
 @Controller('business/rentals')
 @UseGuards(AuthGuard, TenantAccessGuard, PermissionGuard)
@@ -34,6 +35,12 @@ export class RentalsController {
 
   @Get() @RequirePermission('rental.view')
   list(@CurrentActor() actor: Actor, @Query() query: RentalQueryDto) { return this.rentals.list(actor, query.status); }
+
+  @Get('extension-requests') @RequirePermission('rental.manage')
+  extensionRequests(@CurrentActor() actor: Actor) { return this.rentals.extensionRequests(actor); }
+
+  @Patch('extension-requests/:requestId') @RequirePermission('rental.manage')
+  reviewExtensionRequest(@CurrentActor() actor: Actor, @Param('requestId') requestId: string, @Body() body: ReviewExtensionRequestDto) { return this.rentals.reviewExtensionRequest(actor, requestId, body); }
 
   @Get('return-locations') @RequirePermission('rental.return')
   returnLocations(@CurrentActor() actor: Actor) { return this.rentals.returnLocations(actor); }

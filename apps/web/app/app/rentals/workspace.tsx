@@ -7,6 +7,7 @@ import type { ColumnsType } from 'antd/es/table';
 import { DateTimeDisplay, MoneyDisplay, PageHeader } from '../../../components/ui';
 import styles from './rentals.module.css';
 import { inspectionAreas, type VehicleConditionChecklist } from '../../../../../packages/config/src/inspection';
+import { ExtensionRequests, type ExtensionRequestRow } from './extension-requests';
 
 type Status = 'BOOKED' | 'ACTIVE' | 'RETURNED' | 'CLOSED' | 'CANCELLED';
 export type RentalLocation = { id: string; name: string };
@@ -33,7 +34,7 @@ function toIso(value: string) { return new Date(value).toISOString(); }
 function localDateTime(date: Date) { return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16); }
 function failure(payload: unknown) { const detail = (payload as { error?: { message?: string | string[] } } | null)?.error?.message; return (Array.isArray(detail) ? detail[0] : detail) ?? 'We could not complete that action. Please try again.'; }
 
-export function RentalsWorkspace({ initialRentals, locations, canCheckout, canReturn, canExtend, canInspect, canSettle }: { initialRentals: RentalRow[]; locations: RentalLocation[]; canCheckout: boolean; canReturn: boolean; canExtend: boolean; canInspect: boolean; canSettle: boolean }) {
+export function RentalsWorkspace({ initialRentals, initialExtensionRequests, locations, canCheckout, canReturn, canExtend, canInspect, canSettle }: { initialRentals: RentalRow[]; initialExtensionRequests: ExtensionRequestRow[]; locations: RentalLocation[]; canCheckout: boolean; canReturn: boolean; canExtend: boolean; canInspect: boolean; canSettle: boolean }) {
   const router = useRouter();
   const [rentals, setRentals] = useState(initialRentals);
   const [active, setActive] = useState<RentalRow>();
@@ -93,6 +94,7 @@ export function RentalsWorkspace({ initialRentals, locations, canCheckout, canRe
     {contextHolder}
     <PageHeader title="Rentals" description="Keep handovers, active rentals, extensions and vehicle returns in one clear workflow." />
     <div className={styles.summary}><Card><span>Ready for handover</span><strong>{counts.booked}</strong></Card><Card><span>Currently on rent</span><strong>{counts.active}</strong></Card><Card><span>Past return time</span><strong>{counts.overdue}</strong></Card></div>
+    {canExtend && <ExtensionRequests initialRequests={initialExtensionRequests} />}
     <Card className={styles.listCard}>
       <div className={styles.listHeading}><div><h2>Rental schedule</h2><p>Each rental keeps a dated customer and vehicle record. Returned vehicles move to preparation before becoming available again.</p></div></div>
       {rentals.length ? <Table rowKey="id" columns={columns} dataSource={rentals} pagination={{ pageSize: 10, showSizeChanger: false }} scroll={{ x: 980 }} /> : <Empty description="No rentals yet. A confirmed booking appears here when it is marked ready and converted." />}
